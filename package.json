@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "description": "OpenClaw plugin for XiotBox connectivity via WebSocket",
     "type": "module",
-    "main": "index.ts",
+    "main": "dist/index.js",
     "keywords": [
         "openclaw-plugin",
         "xiotbox",
@@ -12,7 +12,11 @@
     "author": "OpenClaw",
     "license": "MIT",
     "scripts": {
-        "start": "node bridge.js"
+        "start": "node bridge.js",
+        "build": "tsc -p tsconfig.json",
+        "clean": "rm -rf dist",
+        "prepack": "npm run build",
+        "postinstall": "npm run build"
     },
     "dependencies": {
         "ws": "^8.13.0",
@@ -22,9 +26,19 @@
         "@types/node": "^22.0.0",
         "typescript": "^5.8.0"
     },
+    "files": [
+        "dist",
+        "openclaw.plugin.json",
+        "README.md",
+        ".env.example",
+        "wss_client.js",
+        "bridge.js",
+        "config.js",
+        "executor.js"
+    ],
     "openclaw": {
         "extensions": [
-            "./index.ts"
+            "./dist/index.js"
         ],
         "channels": [
             "xiotbox"

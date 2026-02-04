@@ -1,5 +1,5 @@
 import WSSClient from '../wss_client.js';
-import { getXiotboxRuntime } from './runtime';
+import { getXiotboxRuntime } from './runtime.js';
 
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;

@@ -16,6 +16,14 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 
 配置将在 OpenClaw 插件设置界面中进行。
 
+> ⚠️ 本插件采用 **TS 开发 + dist 发布**（Feishu 路线）。  
+> 运行时入口为 `dist/index.js`，安装后如未自动生成 dist，请执行：
+>
+> ```bash
+> npm install
+> npm run build
+> ```
+
 ## Mode 2: Bridge Mode (Recommended for stability/media)
 
 Run as a standalone service that bridges XiotBox to a local OpenClaw Gateway.
