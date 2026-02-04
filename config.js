@@ -20,7 +20,7 @@ const CONFIG_FILE = path.join(__dirname, 'config.json');
  */
 function load() {
     let config = {
-        GATEWAY_WSS_URL: process.env.GATEWAY_WSS_URL || '',
+        GATEWAY_WSS_URL: process.env.GATEWAY_WSS_URL || process.env.XIOTBOX_GATEWAY_WSS || '',
         GATEWAY_API_URL: process.env.GATEWAY_API_URL || '',
         PAIR_CODE: process.env.PAIR_CODE || '',
         DEVICE_ID: process.env.DEVICE_ID || '',

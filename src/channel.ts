@@ -1,9 +1,10 @@
 import WSSClient from '../wss_client.js';
-import { getXiotboxRuntime } from './runtime.js';
+import { getXiotboxRuntime } from './runtime';
 
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;
 const DEFAULT_STREAM_THROTTLE_MS = 500;
+const DEFAULT_ACCOUNT_ID = 'default';
 
 function buildConfig(cfg: any) {
   const channelCfg = cfg?.channels?.xiotbox || {};
@@ -34,6 +35,22 @@ function shouldSkipReply(text: string): boolean {
   return false;
 }
 
+function isConfiguredCfg(cfg: any): boolean {
+  const channelCfg = cfg?.channels?.xiotbox || {};
+  const deviceId = channelCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID;
+  const deviceToken = channelCfg.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN;
+  return Boolean(deviceId && deviceToken);
+}
+
+function resolveAccount(cfg: any, accountId?: string) {
+  const channelCfg = cfg?.channels?.xiotbox || {};
+  return {
+    accountId: accountId || DEFAULT_ACCOUNT_ID,
+    config: channelCfg,
+    enabled: channelCfg.enabled !== false,
+  };
+}
+
 export const xiotboxPlugin = {
   id: 'xiotbox',
   meta: {
@@ -53,8 +70,27 @@ export const xiotboxPlugin = {
     outbound: false,
   },
   reload: { configPrefixes: ['channels.xiotbox'] },
-  runtime: {
-    start: async (ctx: any) => {
+  config: {
+    listAccountIds: (cfg: any): string[] => (isConfiguredCfg(cfg) ? [DEFAULT_ACCOUNT_ID] : []),
+    resolveAccount: (cfg: any, accountId?: string) => resolveAccount(cfg, accountId),
+    defaultAccountId: () => DEFAULT_ACCOUNT_ID,
+    isConfigured: (account: any) =>
+      Boolean(
+        (account?.config?.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID) &&
+          (account?.config?.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN),
+      ),
+    describeAccount: (account: any) => ({
+      accountId: account.accountId,
+      name: account.config?.name || 'XiotBox',
+      enabled: account.enabled,
+      configured: Boolean(
+        (account.config?.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID) &&
+          (account.config?.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN),
+      ),
+    }),
+  },
+  gateway: {
+    startAccount: async (ctx: any) => {
       const { cfg, log } = ctx;
       const finalCfg = buildConfig(cfg);
 
@@ -132,6 +168,7 @@ export const xiotboxPlugin = {
             SessionKey: sessionKey,
             AccountId: 'default',
             MessageSid: cmdId,
+            TraceId: traceId,
             ChatType: 'direct',
             ConversationLabel: finalCfg.DEVICE_ID,
             SenderId: payload?.from || 'xiotbox',

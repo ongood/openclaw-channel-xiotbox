@@ -1,5 +1,5 @@
-import { setXiotboxRuntime } from './src/runtime.js';
-import { xiotboxPlugin } from './src/channel.js';
+import { setXiotboxRuntime } from './src/runtime';
+import { xiotboxPlugin } from './src/channel';
 
 const plugin = {
   id: 'xiotbox',
