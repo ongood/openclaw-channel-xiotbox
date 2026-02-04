@@ -1,0 +1,21 @@
+{
+    "id": "xiotbox",
+    "channels": [
+        "xiotbox"
+    ],
+    "configSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+            "GATEWAY_WSS_URL": {
+                "type": "string"
+            },
+            "DEVICE_ID": {
+                "type": "string"
+            },
+            "DEVICE_TOKEN": {
+                "type": "string"
+            }
+        }
+    }
+}

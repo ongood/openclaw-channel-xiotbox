@@ -13,5 +13,18 @@
     "dependencies": {
         "ws": "^8.13.0",
         "dotenv": "^16.0.3"
+    },
+    "openclaw": {
+        "channels": [
+            "xiotbox"
+        ],
+        "installDependencies": true,
+        "channel": {
+            "id": "xiotbox",
+            "label": "XiotBox",
+            "selectionLabel": "XiotBox Gateway",
+            "blurb": "Connects to XiotBox Gateway via WebSocket Secure (WSS) protocol.",
+            "order": 100
+        }
     }
 }
