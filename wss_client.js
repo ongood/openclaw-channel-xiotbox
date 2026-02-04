@@ -4,7 +4,12 @@ import os from 'os';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-const pkg = require('./package.json');
+let pkg;
+try {
+    pkg = require('./package.json');
+} catch (err) {
+    pkg = require('../package.json');
+}
 
 /**
  * WSS 客户端
