@@ -63,7 +63,7 @@ npm start
 
 ## Architecture
 
-- **Plugin Mode**: `index.js` registers as an OpenClaw Channel Plugin.
+- **Plugin Mode**: `index.ts` registers as an OpenClaw Channel Plugin and dispatches to OpenClaw runtime.
 - **Bridge Mode**: `bridge.js` connects to OpenClaw Gateway as an Operator Client.
 
 ## License

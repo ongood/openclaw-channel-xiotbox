@@ -1,9 +1,18 @@
-require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const https = require('https');
-const http = require('http');
+import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import https from 'https';
+import http from 'http';
+import os from 'os';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
+dotenv.config();
+
+const require = createRequire(import.meta.url);
+const pkg = require('./package.json');
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 /**
@@ -18,7 +27,8 @@ function load() {
         DEVICE_TOKEN: process.env.DEVICE_TOKEN || '',
         TENANT_ID: process.env.TENANT_ID || '',
         USE_QUERY_AUTH: (process.env.USE_QUERY_AUTH || '').toLowerCase() === 'true',
-        COMMAND_TIMEOUT: parseInt(process.env.COMMAND_TIMEOUT || '300000', 10)
+        COMMAND_TIMEOUT: parseInt(process.env.COMMAND_TIMEOUT || '300000', 10),
+        USE_QUERY_AUTH: (process.env.USE_QUERY_AUTH || '').toLowerCase() === 'true'
     };
 
     // 从文件加载持久化配置（设备凭证）
@@ -84,8 +94,8 @@ async function pair(config) {
 
     // 准备设备信息
     const deviceInfo = {
-        hostname: require('os').hostname(),
-        version: require('./package.json').version,
+        hostname: os.hostname(),
+        version: pkg.version,
         capabilities: {
             commands: ['help', 'status', 'ping', 'version'],
             streaming: false
@@ -160,4 +170,5 @@ function httpPost(url, data) {
     });
 }
 
-module.exports = { load, save, pair };
+export { load, save, pair };
+export default { load, save, pair };

@@ -1,5 +1,10 @@
-const WebSocket = require('ws');
-const EventEmitter = require('events');
+import WebSocket from 'ws';
+import { EventEmitter } from 'events';
+import os from 'os';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const pkg = require('./package.json');
 
 /**
  * WSS 客户端
@@ -33,7 +38,7 @@ class WSSClient extends EventEmitter {
 
             this.ws = new WebSocket(url, {
                 headers: {
-                    'User-Agent': `openclaw-xiotbox/${require('./package.json').version}`,
+                    'User-Agent': `openclaw-xiotbox/${pkg.version}`,
                     ...(this.config.DEVICE_TOKEN ? { 'Authorization': `Bearer ${this.config.DEVICE_TOKEN}` } : {}),
                     ...(this.config.DEVICE_ID ? { 'X-Device-Id': this.config.DEVICE_ID } : {})
                 }
@@ -130,7 +135,7 @@ class WSSClient extends EventEmitter {
      */
     sendHello() {
         this.sendMessage('HELLO', {
-            version: require('./package.json').version,
+            version: pkg.version,
             capabilities: {
                 commands: ['help', 'status', 'ping', 'version'],
                 streaming: false,  // 暂不支持流式输出
@@ -140,7 +145,7 @@ class WSSClient extends EventEmitter {
                 platform: process.platform,
                 arch: process.arch,
                 node_version: process.version,
-                hostname: require('os').hostname()
+                hostname: os.hostname()
             }
         });
 
@@ -205,7 +210,7 @@ class WSSClient extends EventEmitter {
                 break;
 
             case 'COMMAND':
-                // 触发命令事件（由 index.js 处理）
+                // 触发命令事件（由 channel 处理）
                 this.emit('COMMAND', payload);
                 break;
 
@@ -268,4 +273,4 @@ class WSSClient extends EventEmitter {
     }
 }
 
-module.exports = WSSClient;
+export default WSSClient;

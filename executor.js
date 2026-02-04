@@ -1,5 +1,10 @@
-const { exec } = require('child_process');
-const util = require('util');
+import { exec } from 'child_process';
+import util from 'util';
+import os from 'os';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const pkg = require('./package.json');
 const execAsync = util.promisify(exec);
 
 /**
@@ -70,9 +75,9 @@ class Executor {
 
             case '/version':
                 return {
-                    text: `openclaw-channel-xiotbox v${require('./package.json').version}`,
+                    text: `openclaw-channel-xiotbox v${pkg.version}`,
                     json: {
-                        version: require('./package.json').version,
+                        version: pkg.version,
                         node: process.version,
                         platform: process.platform
                     },
@@ -117,7 +122,7 @@ class Executor {
 ✓ 状态：运行中
 ⏱ 运行时间：${this.formatUptime(process.uptime())}
 💾 内存使用：${this.formatBytes(mem.heapUsed)} / ${this.formatBytes(mem.heapTotal)}
-🖥 主机：${require('os').hostname()}
+🖥 主机：${os.hostname()}
 📍 平台：${process.platform} (${process.arch})
 🔧 Node.js：${process.version}`;
 
@@ -135,7 +140,7 @@ class Executor {
                     user: cpu.user,
                     system: cpu.system
                 },
-                hostname: require('os').hostname(),
+                hostname: os.hostname(),
                 platform: process.platform,
                 arch: process.arch,
                 nodeVersion: process.version
@@ -210,4 +215,4 @@ class Executor {
     }
 }
 
-module.exports = Executor;
+export default Executor;

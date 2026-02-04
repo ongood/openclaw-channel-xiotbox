@@ -5,9 +5,11 @@
  * Allows XiotBox devices to interact with OpenClaw Agents.
  */
 
-require('dotenv').config();
-const WebSocket = require('ws');
-const WSSClient = require('./wss_client');
+import dotenv from 'dotenv';
+import WebSocket from 'ws';
+import WSSClient from './wss_client.js';
+
+dotenv.config();
 
 // Configuration
 const GATEWAY_PORT = process.env.OPENCLAW_GATEWAY_PORT || 18789;

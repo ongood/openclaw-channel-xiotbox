@@ -18,6 +18,24 @@
             },
             "USE_QUERY_AUTH": {
                 "type": "boolean"
+            },
+            "OUTBOX_MAX": {
+                "type": "number"
+            },
+            "OUTBOX_TTL_MS": {
+                "type": "number"
+            },
+            "COMMAND_CACHE_TTL_MS": {
+                "type": "number"
+            },
+            "COMMAND_CACHE_MAX": {
+                "type": "number"
+            },
+            "STREAMING": {
+                "type": "boolean"
+            },
+            "STREAM_THROTTLE_MS": {
+                "type": "number"
             }
         }
     }
