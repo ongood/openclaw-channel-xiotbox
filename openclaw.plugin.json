@@ -15,6 +15,9 @@
             },
             "DEVICE_TOKEN": {
                 "type": "string"
+            },
+            "USE_QUERY_AUTH": {
+                "type": "boolean"
             }
         }
     }

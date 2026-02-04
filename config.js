@@ -17,6 +17,7 @@ function load() {
         DEVICE_ID: process.env.DEVICE_ID || '',
         DEVICE_TOKEN: process.env.DEVICE_TOKEN || '',
         TENANT_ID: process.env.TENANT_ID || '',
+        USE_QUERY_AUTH: (process.env.USE_QUERY_AUTH || '').toLowerCase() === 'true',
         COMMAND_TIMEOUT: parseInt(process.env.COMMAND_TIMEOUT || '300000', 10)
     };
 

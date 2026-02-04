@@ -45,9 +45,12 @@ GATEWAY_TOKEN=your_gateway_token_here
 CLAWDBOT_AGENT_ID=main
 
 # XiotBox Connection
-XIOTBOX_GATEWAY_WSS=wss://your-xiotbox-server.com/ws/openclaw
+# (socketd WS 默认端口通常为 9002，可按实际部署设置)
+XIOTBOX_GATEWAY_WSS=wss://your-xiotbox-server.com:9002/ws/openclaw
 XIOTBOX_DEVICE_ID=your_device_id
 XIOTBOX_DEVICE_TOKEN=your_device_token
+# 可选：如果网关只支持 query 认证，设置为 true
+# USE_QUERY_AUTH=true
 # Or use PAIR_CODE for first time setup if supported by wss_client
 # PAIR_CODE=...
 ```

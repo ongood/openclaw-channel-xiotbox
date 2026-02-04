@@ -15,6 +15,9 @@ class WSSClient extends EventEmitter {
         this.maxReconnectDelay = 60000;  // 最大重连延迟 60 秒
         this.heartbeatInterval = null;
         this.isManualDisconnect = false;  // 是否手动断开
+        this.outbox = [];
+        this.maxOutbox = config.OUTBOX_MAX || 200;
+        this.outboxTtlMs = config.OUTBOX_TTL_MS || 5 * 60 * 1000;
     }
 
     /**
@@ -22,14 +25,17 @@ class WSSClient extends EventEmitter {
      */
     async connect() {
         return new Promise((resolve, reject) => {
+            this.isManualDisconnect = false;
             // 构建 WSS URL（附带设备凭证）
-            const url = `${this.config.GATEWAY_WSS_URL}?device_id=${encodeURIComponent(this.config.DEVICE_ID)}&token=${encodeURIComponent(this.config.DEVICE_TOKEN)}`;
+            const url = this._buildWsUrl();
 
             console.log('[WSS] Connecting to gateway...');
 
             this.ws = new WebSocket(url, {
                 headers: {
-                    'User-Agent': `openclaw-xiotbox/${require('./package.json').version}`
+                    'User-Agent': `openclaw-xiotbox/${require('./package.json').version}`,
+                    ...(this.config.DEVICE_TOKEN ? { 'Authorization': `Bearer ${this.config.DEVICE_TOKEN}` } : {}),
+                    ...(this.config.DEVICE_ID ? { 'X-Device-Id': this.config.DEVICE_ID } : {})
                 }
             });
 
@@ -44,6 +50,9 @@ class WSSClient extends EventEmitter {
 
                 // 开始心跳
                 this.startHeartbeat();
+
+                // 发送离线期间积压的消息
+                this.flushOutbox();
 
                 resolve();
             });
@@ -63,6 +72,7 @@ class WSSClient extends EventEmitter {
                 console.log(`[WSS] Connection closed (code: ${code}, reason: ${reason || 'none'})`);
                 this.emit('disconnected');
                 this.stopHeartbeat();
+                this.ws = null;
 
                 // 如果不是手动断开，则自动重连
                 if (!this.isManualDisconnect) {
@@ -177,6 +187,8 @@ class WSSClient extends EventEmitter {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify(envelope));
         } else {
+            // 缓存到队列，等重连后再发送
+            this._enqueue(envelope);
             console.warn(`[WSS] Cannot send message: connection not open (state: ${this.ws ? this.ws.readyState : 'null'})`);
         }
     }
@@ -207,6 +219,51 @@ class WSSClient extends EventEmitter {
 
             default:
                 console.warn('[WSS] Unknown message type:', type);
+        }
+    }
+
+    /**
+     * 构建连接 URL（默认不在 query 中传 token，避免日志泄露）
+     */
+    _buildWsUrl() {
+        const baseUrl = this.config.GATEWAY_WSS_URL;
+        if (!this.config.USE_QUERY_AUTH) {
+            return baseUrl;
+        }
+        try {
+            const urlObj = new URL(baseUrl);
+            urlObj.searchParams.set('device_id', this.config.DEVICE_ID);
+            urlObj.searchParams.set('token', this.config.DEVICE_TOKEN);
+            return urlObj.toString();
+        } catch (err) {
+            // fallback
+            return `${baseUrl}?device_id=${encodeURIComponent(this.config.DEVICE_ID)}&token=${encodeURIComponent(this.config.DEVICE_TOKEN)}`;
+        }
+    }
+
+    _enqueue(envelope) {
+        const now = Date.now();
+        this.outbox.push({ envelope, ts: now });
+        // trim oldest
+        while (this.outbox.length > this.maxOutbox) {
+            this.outbox.shift();
+        }
+    }
+
+    flushOutbox() {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        const now = Date.now();
+        const pending = this.outbox;
+        this.outbox = [];
+        for (const item of pending) {
+            if (now - item.ts > this.outboxTtlMs) continue;
+            try {
+                this.ws.send(JSON.stringify(item.envelope));
+            } catch (err) {
+                // re-queue if send fails
+                this._enqueue(item.envelope);
+                break;
+            }
         }
     }
 }
