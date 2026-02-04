@@ -91,6 +91,22 @@ const xiotboxPlugin = {
                         if (text === '/ping') {
                             resultData.output = 'pong';
                             resultData.output_text = 'pong';
+                        } else if (text === '/version') {
+                            const ver = require('./package.json').version;
+                            resultData.output = `openclaw-channel-xiotbox v${ver}`;
+                            resultData.output_text = `openclaw-channel-xiotbox v${ver}`;
+                            resultData.output_json = { version: ver, node: process.version, platform: process.platform };
+                        } else if (text === '/status') {
+                            const mem = process.memoryUsage();
+                            const cpu = process.cpuUsage();
+                            resultData.output = `status: running; uptime: ${Math.round(process.uptime())}s`;
+                            resultData.output_text = resultData.output;
+                            resultData.output_json = {
+                                status: 'running',
+                                uptime: process.uptime(),
+                                memory: { rss: mem.rss, heapUsed: mem.heapUsed, heapTotal: mem.heapTotal },
+                                cpu: { user: cpu.user, system: cpu.system }
+                            };
                         }
 
                         const resultPayload = {
