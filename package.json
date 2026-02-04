@@ -1,25 +1,17 @@
 {
-  "name": "openclaw-channel-xiotbox",
-  "version": "1.0.0",
-  "description": "OpenClaw plugin for XiotBox integration - 将 OpenClaw 接入 XiotBox 网关的插件",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [
-    "openclaw",
-    "xiotbox",
-    "plugin",
-    "remote-command"
-  ],
-  "author": "XiotBox Team",
-  "license": "MIT",
-  "dependencies": {
-    "ws": "^8.16.0",
-    "dotenv": "^16.4.1"
-  },
-  "engines": {
-    "node": ">=14.0.0"
-  }
+    "name": "openclaw-channel-xiotbox",
+    "version": "1.0.0",
+    "description": "OpenClaw plugin for XiotBox connectivity via WebSocket",
+    "main": "index.js",
+    "keywords": [
+        "openclaw-plugin",
+        "xiotbox",
+        "channel"
+    ],
+    "author": "OpenClaw",
+    "license": "MIT",
+    "dependencies": {
+        "ws": "^8.13.0",
+        "dotenv": "^16.0.3"
+    }
 }
