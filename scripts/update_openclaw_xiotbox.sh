@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.6}"
+TAG="${1:-1.0.7}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
 EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/openclaw-channel-xiotbox}"
@@ -49,8 +49,52 @@ PY
 fi
 
 rm -rf "$EXT_DIR"
+set +e
 openclaw plugins install "$REPO"
-openclaw doctor --fix
+install_rc=$?
+set -e
+
+if [ -f "$CFG_PATH" ]; then
+  export CFG_PATH
+  export REPO
+  export EXT_DIR
+  python3 - <<'PY'
+import json
+import os
+import pathlib
+from datetime import datetime, timezone
+
+p = pathlib.Path(os.environ["CFG_PATH"]).expanduser()
+data = json.loads(p.read_text("utf-8"))
+plugins = data.get("plugins") or {}
+entries = plugins.get("entries") or {}
+installs = plugins.get("installs") or {}
+
+if "openclaw-channel-xiotbox" in entries and "xiotbox" not in entries:
+    entries["xiotbox"] = entries["openclaw-channel-xiotbox"]
+entries.pop("openclaw-channel-xiotbox", None)
+
+inst = installs.get("xiotbox") or installs.get("openclaw-channel-xiotbox") or {}
+installs.pop("openclaw-channel-xiotbox", None)
+inst["source"] = inst.get("source") or "npm"
+inst["spec"] = os.environ.get("REPO", inst.get("spec", ""))
+inst["installPath"] = os.environ.get("EXT_DIR", inst.get("installPath", ""))
+if "installedAt" not in inst or not inst["installedAt"]:
+    inst["installedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+installs["xiotbox"] = inst
+
+plugins["entries"] = entries
+plugins["installs"] = installs
+data["plugins"] = plugins
+p.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+print("normalized plugins entries/installs", p)
+PY
+fi
+
+openclaw doctor --fix || true
+if [ "$install_rc" -ne 0 ]; then
+  echo "openclaw plugins install exited with code $install_rc; config normalized."
+fi
 
 if [ -f "$CFG_PATH" ]; then
   export CFG_PATH
