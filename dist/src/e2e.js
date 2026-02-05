@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { x25519 } from '@noble/curves/ed25519';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -15,6 +16,13 @@ const PUBKEY_LEN = 32;
 const WRAP_NONCE_LEN = 12;
 const CONTENT_KEY_LEN = 32;
 const GCM_TAG_LEN = 16;
+const HAS_NATIVE_X25519 = (() => {
+  try {
+    return typeof crypto.getCurves === 'function' && crypto.getCurves().includes('x25519');
+  } catch (_err) {
+    return false;
+  }
+})();
 
 function b64e(buf) {
   return Buffer.from(buf).toString('base64');
@@ -74,6 +82,26 @@ function aesGcmDecrypt(key, nonce, ciphertext, aad) {
   return Buffer.concat([decipher.update(ct), decipher.final()]);
 }
 
+function x25519Keypair() {
+  if (HAS_NATIVE_X25519) {
+    const ecdh = crypto.createECDH('x25519');
+    ecdh.generateKeys();
+    return { priv: ecdh.getPrivateKey(), pub: ecdh.getPublicKey() };
+  }
+  const priv = crypto.randomBytes(32);
+  const pub = Buffer.from(x25519.getPublicKey(priv));
+  return { priv, pub };
+}
+
+function x25519SharedSecret(priv, pub) {
+  if (HAS_NATIVE_X25519) {
+    const ecdh = crypto.createECDH('x25519');
+    ecdh.setPrivateKey(priv);
+    return ecdh.computeSecret(pub);
+  }
+  return Buffer.from(x25519.getSharedSecret(priv, pub));
+}
+
 export function buildEnvelope(plaintext, receiverPubkey, keyId, aad) {
   if (!receiverPubkey || receiverPubkey.length !== PUBKEY_LEN) {
     throw new Error('invalid_pubkey_len');
@@ -82,10 +110,8 @@ export function buildEnvelope(plaintext, receiverPubkey, keyId, aad) {
   const contentNonce = crypto.randomBytes(12);
   const ciphertext = aesGcmEncrypt(contentKey, contentNonce, plaintext, aad);
 
-  const ecdh = crypto.createECDH('x25519');
-  ecdh.generateKeys();
-  const epkPub = ecdh.getPublicKey();
-  const shared = ecdh.computeSecret(receiverPubkey);
+  const { priv: epkPriv, pub: epkPub } = x25519Keypair();
+  const shared = x25519SharedSecret(epkPriv, receiverPubkey);
   const wrapKey = crypto.hkdfSync('sha256', shared, Buffer.alloc(0), HKDF_INFO, 32);
   const wrapNonce = crypto.randomBytes(WRAP_NONCE_LEN);
   const wrappedKey = aesGcmEncrypt(wrapKey, wrapNonce, contentKey, null);
@@ -117,9 +143,7 @@ export function decryptEnvelope(envelope, privRaw, aad) {
   const epk = ekBlob.slice(0, PUBKEY_LEN);
   const wrapNonce = ekBlob.slice(PUBKEY_LEN, PUBKEY_LEN + WRAP_NONCE_LEN);
   const wrapped = ekBlob.slice(PUBKEY_LEN + WRAP_NONCE_LEN);
-  const ecdh = crypto.createECDH('x25519');
-  ecdh.setPrivateKey(privRaw);
-  const shared = ecdh.computeSecret(epk);
+  const shared = x25519SharedSecret(privRaw, epk);
   const wrapKey = crypto.hkdfSync('sha256', shared, Buffer.alloc(0), HKDF_INFO, 32);
   const contentKey = aesGcmDecrypt(wrapKey, wrapNonce, wrapped, null);
 
@@ -175,10 +199,7 @@ function saveKeypair(cfg, deviceId, priv, pub) {
 }
 
 function generateKeypair(cfg, deviceId) {
-  const ecdh = crypto.createECDH('x25519');
-  ecdh.generateKeys();
-  const priv = ecdh.getPrivateKey();
-  const pub = ecdh.getPublicKey();
+  const { priv, pub } = x25519Keypair();
   return saveKeypair(cfg, deviceId, priv, pub);
 }
 

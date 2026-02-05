@@ -18,6 +18,7 @@
         "prepack": "npm run build"
     },
     "dependencies": {
+        "@noble/curves": "^1.4.0",
         "ws": "^8.13.0",
         "dotenv": "^16.0.3"
     },
