@@ -263,7 +263,7 @@ export class OpenClawE2E {
   async refreshPeerKey() {
     const apiBase = this.cfg.API_BASE_URL || this._deriveApiBase();
     if (!apiBase) throw new Error('missing_api_base');
-    const url = `${apiBase.replace(/\\/$/, '')}/openclaw/devices/e2e/peer_key`;
+    const url = `${apiBase.replace(/\/$/, '')}/openclaw/devices/e2e/peer_key`;
     const headers = {
       Authorization: `Bearer ${this.cfg.DEVICE_TOKEN}`,
       'X-Device-Id': this.cfg.DEVICE_ID,
