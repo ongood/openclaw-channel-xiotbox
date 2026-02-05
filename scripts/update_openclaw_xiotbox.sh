@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.7}"
+TAG="${1:-1.0.8}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
-EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/openclaw-channel-xiotbox}"
+EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/xiotbox}"
+OLD_EXT_DIR="$HOME/.openclaw/extensions/openclaw-channel-xiotbox"
 CFG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
 BACKUP_PATH="${OPENCLAW_XIOTBOX_BACKUP:-$HOME/.openclaw/.xiotbox_channel_backup.json}"
 
@@ -48,11 +49,16 @@ print("cleaned config", p)
 PY
 fi
 
-rm -rf "$EXT_DIR"
+rm -rf "$EXT_DIR" "$OLD_EXT_DIR"
 set +e
 openclaw plugins install "$REPO"
 install_rc=$?
 set -e
+
+if [ -d "$OLD_EXT_DIR" ] && [ ! -d "$EXT_DIR" ]; then
+  mkdir -p "$(dirname "$EXT_DIR")"
+  mv "$OLD_EXT_DIR" "$EXT_DIR"
+fi
 
 if [ -f "$CFG_PATH" ]; then
   export CFG_PATH
