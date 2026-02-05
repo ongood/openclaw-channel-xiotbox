@@ -28,6 +28,7 @@ class WSSClient extends EventEmitter {
         this.outbox = [];
         this.maxOutbox = config.OUTBOX_MAX || 200;
         this.outboxTtlMs = config.OUTBOX_TTL_MS || 5 * 60 * 1000;
+        this.helloExtra = config.HELLO_EXTRA || {};
     }
 
     /**
@@ -139,7 +140,7 @@ class WSSClient extends EventEmitter {
      * 发送 HELLO 消息（上报设备信息）
      */
     sendHello() {
-        this.sendMessage('HELLO', {
+        const payload = {
             version: pkg.version,
             capabilities: {
                 commands: ['help', 'status', 'ping', 'version'],
@@ -152,9 +153,21 @@ class WSSClient extends EventEmitter {
                 node_version: process.version,
                 hostname: os.hostname()
             }
-        });
+        };
+        const extra = this.helloExtra || this.config.HELLO_EXTRA || {};
+        if (extra.thread_id) {
+            payload.thread_id = extra.thread_id;
+        }
+        if (extra.e2e) {
+            payload.e2e = extra.e2e;
+        }
+        this.sendMessage('HELLO', payload);
 
         console.log('[WSS] Sent HELLO');
+    }
+
+    setHelloExtra(extra) {
+        this.helloExtra = extra || {};
     }
 
     /**

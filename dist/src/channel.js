@@ -1,5 +1,6 @@
 import WSSClient from '../wss_client.js';
 import { getXiotboxRuntime } from './runtime.js';
+import { OpenClawE2E } from './e2e.js';
 
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;
@@ -19,6 +20,9 @@ function buildConfig(cfg) {
     COMMAND_CACHE_MAX: channelCfg.COMMAND_CACHE_MAX || DEFAULT_CACHE_MAX,
     STREAMING: channelCfg.STREAMING || false,
     STREAM_THROTTLE_MS: channelCfg.STREAM_THROTTLE_MS || DEFAULT_STREAM_THROTTLE_MS,
+    API_BASE_URL: channelCfg.API_BASE_URL || process.env.XIOTBOX_API_BASE,
+    E2E_KEY_PATH: channelCfg.E2E_KEY_PATH || process.env.XIOTBOX_E2E_KEY_PATH,
+    E2E_ROTATE: channelCfg.E2E_ROTATE || process.env.XIOTBOX_E2E_ROTATE,
   };
 }
 
@@ -111,6 +115,17 @@ export const xiotboxPlugin = {
       }
 
       const commandCache = new Map();
+      const e2e = new OpenClawE2E(finalCfg, log);
+      e2e.init();
+      try {
+        await e2e.refreshPeerKey();
+      } catch (err) {
+        log?.warn?.(`[XiotBox] E2E peer key not ready: ${err?.message || err}`);
+      }
+      finalCfg.HELLO_EXTRA = {
+        e2e: e2e.helloPayload(),
+        thread_id: e2e.threadId || undefined,
+      };
 
       const pruneCache = () => {
         const now = Date.now();
@@ -156,7 +171,64 @@ export const xiotboxPlugin = {
             result: {},
           });
 
-          const text = payload?.payload?.text || payload?.text || '';
+          const incoming = payload?.payload || payload || {};
+          if (!e2e.peerPublicKey) {
+            try {
+              await e2e.refreshPeerKey();
+            } catch (_err) {
+              // keep going
+            }
+          }
+          const env = (incoming?.magic === 'OGE2E1' ? incoming : incoming?.e2e) || null;
+          if (!env || env.magic !== 'OGE2E1') {
+            const failPayload = {
+              command_id: cmdId,
+              status: 'failed',
+              trace_id: traceId,
+              error: 'e2e_required',
+              result: {},
+            };
+            client.sendMessage('COMMAND_RESULT', failPayload);
+            setCached(cmdId, failPayload);
+            return;
+          }
+          if (!e2e.peerPublicKey) {
+            const failPayload = {
+              command_id: cmdId,
+              status: 'failed',
+              trace_id: traceId,
+              error: 'e2e_peer_missing',
+              result: {},
+            };
+            client.sendMessage('COMMAND_RESULT', failPayload);
+            setCached(cmdId, failPayload);
+            return;
+          }
+          const contentType = incoming?.content_type || incoming?.contentType || 'text/markdown';
+          const threadId = incoming?.thread_id || e2e.threadId || '';
+          let text = '';
+          try {
+            text = e2e.decryptText(env, {
+              direction: 'c2p',
+              device_id: finalCfg.DEVICE_ID,
+              thread_id: threadId,
+              command_id: cmdId,
+              content_type: contentType,
+              chunk_seq: 0,
+              enc_v: e2e.encV,
+            });
+          } catch (err) {
+            const failPayload = {
+              command_id: cmdId,
+              status: 'failed',
+              trace_id: traceId,
+              error: 'e2e_decrypt_failed',
+              result: {},
+            };
+            client.sendMessage('COMMAND_RESULT', failPayload);
+            setCached(cmdId, failPayload);
+            return;
+          }
           const sessionKey = `xiotbox:${finalCfg.DEVICE_ID}`;
 
           const inboundCtx = {
@@ -185,6 +257,7 @@ export const xiotboxPlugin = {
 
           let lastText = '';
           let lastStreamAt = 0;
+          let chunkSeq = 0;
 
           const deliver = async (outPayload) => {
             const replyText = normalizeTextPayload(outPayload);
@@ -194,13 +267,25 @@ export const xiotboxPlugin = {
             const now = Date.now();
             if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
             lastStreamAt = now;
+            chunkSeq += 1;
+            const envOut = e2e.encryptText(replyText, {
+              direction: 'p2c',
+              device_id: finalCfg.DEVICE_ID,
+              thread_id: threadId,
+              command_id: cmdId,
+              content_type: contentType,
+              chunk_seq: chunkSeq,
+              enc_v: e2e.encV,
+            });
             client.sendMessage('COMMAND_RESULT', {
               command_id: cmdId,
               status: 'running',
               trace_id: traceId,
               result: {
-                output: replyText,
-                output_text: replyText,
+                e2e: envOut,
+                enc_v: e2e.encV,
+                content_type: contentType,
+                chunk_seq: chunkSeq,
               },
             });
           };
@@ -217,26 +302,48 @@ export const xiotboxPlugin = {
 
           const finalText = normalizeTextPayload(queuedFinal) || lastText || '';
           if (!shouldSkipReply(finalText)) {
+            const envOut = e2e.encryptText(finalText, {
+              direction: 'p2c',
+              device_id: finalCfg.DEVICE_ID,
+              thread_id: threadId,
+              command_id: cmdId,
+              content_type: contentType,
+              chunk_seq: chunkSeq,
+              enc_v: e2e.encV,
+            });
             const successPayload = {
               command_id: cmdId,
               status: 'success',
               trace_id: traceId,
               result: {
-                output: finalText,
-                output_text: finalText,
+                e2e: envOut,
+                enc_v: e2e.encV,
+                content_type: contentType,
+                chunk_seq: chunkSeq,
               },
             };
             client.sendMessage('COMMAND_RESULT', successPayload);
             setCached(cmdId, successPayload);
           } else {
             // Still finalize to avoid hanging commands
+            const envOut = e2e.encryptText('', {
+              direction: 'p2c',
+              device_id: finalCfg.DEVICE_ID,
+              thread_id: threadId,
+              command_id: cmdId,
+              content_type: contentType,
+              chunk_seq: chunkSeq,
+              enc_v: e2e.encV,
+            });
             const emptyPayload = {
               command_id: cmdId,
               status: 'success',
               trace_id: traceId,
               result: {
-                output: '',
-                output_text: '',
+                e2e: envOut,
+                enc_v: e2e.encV,
+                content_type: contentType,
+                chunk_seq: chunkSeq,
               },
             };
             client.sendMessage('COMMAND_RESULT', emptyPayload);
@@ -260,6 +367,9 @@ export const xiotboxPlugin = {
 
       client.on('connected', () => {
         log?.info?.('[XiotBox] Connected to Gateway');
+        e2e.refreshPeerKey().catch((err) => {
+          log?.warn?.(`[XiotBox] E2E peer key refresh failed: ${err?.message || err}`);
+        });
       });
 
       client.on('disconnected', () => {

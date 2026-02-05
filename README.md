@@ -58,6 +58,11 @@ CLAWDBOT_AGENT_ID=main
 XIOTBOX_GATEWAY_WSS=wss://your-xiotbox-server.com:9002/ws/openclaw
 XIOTBOX_DEVICE_ID=your_device_id
 XIOTBOX_DEVICE_TOKEN=your_device_token
+# Optional: HTTP API base (used for E2E peer key fetch)
+# XIOTBOX_API_BASE=https://your-xiotbox-server.com
+# Optional: E2E key storage path / rotation
+# XIOTBOX_E2E_KEY_PATH=/var/lib/openclaw/xiotbox_e2e.json
+# XIOTBOX_E2E_ROTATE=1
 # 可选：如果网关只支持 query 认证，设置为 true
 # USE_QUERY_AUTH=true
 # Or use PAIR_CODE for first time setup if supported by wss_client
