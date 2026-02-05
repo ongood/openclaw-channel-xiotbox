@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.5}"
+TAG="${1:-1.0.6}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
 EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/openclaw-channel-xiotbox}"
@@ -23,6 +23,10 @@ entries = plugins.get("entries") or {}
 entries.pop("xiotbox", None)
 entries.pop("openclaw-channel-xiotbox", None)
 plugins["entries"] = entries
+installs = plugins.get("installs") or {}
+installs.pop("xiotbox", None)
+installs.pop("openclaw-channel-xiotbox", None)
+plugins["installs"] = installs
 data["plugins"] = plugins
 
 channels = data.get("channels") or {}
