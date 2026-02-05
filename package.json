@@ -43,6 +43,11 @@
             "xiotbox"
         ],
         "installDependencies": true,
+        "install": {
+            "npmSpec": "openclaw-channel-xiotbox",
+            "localPath": "extensions/xiotbox",
+            "defaultChoice": "local"
+        },
         "channel": {
             "id": "xiotbox",
             "label": "XiotBox",
