@@ -311,7 +311,8 @@ export class OpenClawE2E {
     if (!this.pubRaw || !this.privRaw) throw new Error('missing_keypair');
     const peerRaw = this.ensurePeerKey();
     const aad = this.buildAad(meta);
-    return buildEnvelope(Buffer.from(text || '', 'utf-8'), peerRaw, this.keyId || '', aad);
+    const keyId = this.peerKeyId || computeKeyId(peerRaw);
+    return buildEnvelope(Buffer.from(text || '', 'utf-8'), peerRaw, keyId || '', aad);
   }
 
   decryptText(envelope, meta) {
