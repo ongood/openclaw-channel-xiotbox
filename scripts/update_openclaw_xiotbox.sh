@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.9}"
+TAG="${1:-1.0.10}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
-EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/xiotbox}"
-OLD_EXT_DIR="$HOME/.openclaw/extensions/openclaw-channel-xiotbox"
+EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/openclaw-channel-xiotbox}"
+OLD_EXT_DIR="$HOME/.openclaw/extensions/xiotbox"
 CFG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
 BACKUP_PATH="${OPENCLAW_XIOTBOX_BACKUP:-$HOME/.openclaw/.xiotbox_channel_backup.json}"
 
@@ -76,18 +76,18 @@ plugins = data.get("plugins") or {}
 entries = plugins.get("entries") or {}
 installs = plugins.get("installs") or {}
 
-if "openclaw-channel-xiotbox" in entries and "xiotbox" not in entries:
-    entries["xiotbox"] = entries["openclaw-channel-xiotbox"]
-entries.pop("openclaw-channel-xiotbox", None)
+if "xiotbox" in entries and "openclaw-channel-xiotbox" not in entries:
+    entries["openclaw-channel-xiotbox"] = entries["xiotbox"]
+entries.pop("xiotbox", None)
 
-inst = installs.get("xiotbox") or installs.get("openclaw-channel-xiotbox") or {}
-installs.pop("openclaw-channel-xiotbox", None)
+inst = installs.get("openclaw-channel-xiotbox") or installs.get("xiotbox") or {}
+installs.pop("xiotbox", None)
 inst["source"] = inst.get("source") or "npm"
 inst["spec"] = os.environ.get("REPO", inst.get("spec", ""))
 inst["installPath"] = os.environ.get("EXT_DIR", inst.get("installPath", ""))
 if "installedAt" not in inst or not inst["installedAt"]:
     inst["installedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-installs["xiotbox"] = inst
+installs["openclaw-channel-xiotbox"] = inst
 
 plugins["entries"] = entries
 plugins["installs"] = installs

@@ -2,7 +2,7 @@ import { setXiotboxRuntime } from './src/runtime.js';
 import { xiotboxPlugin } from './src/channel.js';
 
 const plugin = {
-  id: 'xiotbox',
+  id: 'openclaw-channel-xiotbox',
   name: 'XiotBox Channel',
   description: 'XiotBox channel plugin — connect XiotBox devices via WSS and dispatch to OpenClaw runtime.',
   register(api) {
