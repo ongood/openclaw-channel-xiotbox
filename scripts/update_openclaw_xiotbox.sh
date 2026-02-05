@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.4}"
+TAG="${1:-1.0.5}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
 EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/openclaw-channel-xiotbox}"
 CFG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
+BACKUP_PATH="${OPENCLAW_XIOTBOX_BACKUP:-$HOME/.openclaw/.xiotbox_channel_backup.json}"
 
 if [ -f "$CFG_PATH" ]; then
   export CFG_PATH
+  export BACKUP_PATH
   python3 - <<'PY'
 import json
 import os
@@ -23,10 +25,19 @@ entries.pop("openclaw-channel-xiotbox", None)
 plugins["entries"] = entries
 data["plugins"] = plugins
 
-if os.environ.get("OPENCLAW_WIPE_CHANNELS") == "1":
-    channels = data.get("channels") or {}
-    channels.pop("xiotbox", None)
-    data["channels"] = channels
+channels = data.get("channels") or {}
+backup = channels.get("xiotbox")
+if backup:
+    backup_path = pathlib.Path(os.environ["BACKUP_PATH"]).expanduser()
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path.write_text(json.dumps(backup, ensure_ascii=False, indent=2))
+    try:
+        os.chmod(backup_path, 0o600)
+    except OSError:
+        pass
+
+channels.pop("xiotbox", None)
+data["channels"] = channels
 
 p.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 print("cleaned config", p)
@@ -39,6 +50,7 @@ openclaw doctor --fix
 
 if [ -f "$CFG_PATH" ]; then
   export CFG_PATH
+  export BACKUP_PATH
   export XIOTBOX_GATEWAY_WSS="${XIOTBOX_GATEWAY_WSS:-}"
   export XIOTBOX_DEVICE_ID="${XIOTBOX_DEVICE_ID:-}"
   export XIOTBOX_DEVICE_TOKEN="${XIOTBOX_DEVICE_TOKEN:-}"
@@ -55,6 +67,20 @@ p = pathlib.Path(os.environ["CFG_PATH"]).expanduser()
 data = json.loads(p.read_text("utf-8"))
 channels = data.get("channels") or {}
 xiot = channels.get("xiotbox") or {}
+backup_path = pathlib.Path(os.environ["BACKUP_PATH"]).expanduser()
+if backup_path.exists():
+    try:
+        backup = json.loads(backup_path.read_text("utf-8"))
+        if isinstance(backup, dict):
+            merged = {}
+            merged.update(backup)
+            merged.update(xiot)
+            xiot = merged
+    finally:
+        try:
+            backup_path.unlink()
+        except OSError:
+            pass
 
 def pick(key: str, env: str):
     v = (os.environ.get(env) or "").strip()
