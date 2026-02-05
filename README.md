@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.1
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -24,6 +24,17 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 > npm install
 > npm run build
 > ```
+
+### 插件升级（推荐）
+OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
+
+```bash
+bash scripts/update_openclaw_xiotbox.sh 1.0.1
+```
+
+如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
+`OPENCLAW_EXT_DIR` 与 `OPENCLAW_CONFIG`。脚本默认保留 `channels.xiotbox` 配置。
+如需同时清理 `channels.xiotbox`，可设置 `OPENCLAW_WIPE_CHANNELS=1`。
 
 ## Mode 2: Bridge Mode (Recommended for stability/media)
 
