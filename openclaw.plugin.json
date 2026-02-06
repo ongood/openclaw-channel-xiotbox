@@ -36,6 +36,25 @@
             },
             "STREAM_THROTTLE_MS": {
                 "type": "number"
+            },
+            "API_BASE_URL": {
+                "type": "string"
+            },
+            "E2E_KEY_PATH": {
+                "type": "string"
+            },
+            "E2E_ROTATE": {
+                "type": [
+                    "string",
+                    "boolean",
+                    "number"
+                ]
+            },
+            "IDENTITY_KEY_PATH": {
+                "type": "string"
+            },
+            "TRUST_PATH": {
+                "type": "string"
             }
         }
     }

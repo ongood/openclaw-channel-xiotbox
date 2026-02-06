@@ -23,6 +23,8 @@ function buildConfig(cfg: any) {
     API_BASE_URL: channelCfg.API_BASE_URL || process.env.XIOTBOX_API_BASE,
     E2E_KEY_PATH: channelCfg.E2E_KEY_PATH || process.env.XIOTBOX_E2E_KEY_PATH,
     E2E_ROTATE: channelCfg.E2E_ROTATE || process.env.XIOTBOX_E2E_ROTATE,
+    IDENTITY_KEY_PATH: channelCfg.IDENTITY_KEY_PATH || process.env.XIOTBOX_IDENTITY_KEY_PATH,
+    TRUST_PATH: channelCfg.TRUST_PATH || process.env.XIOTBOX_TRUST_PATH,
   };
 }
 
@@ -197,7 +199,7 @@ export const xiotboxPlugin = {
               command_id: cmdId,
               status: 'failed',
               trace_id: traceId,
-              error: 'e2e_peer_missing',
+              error: e2e.peerTrustError || 'e2e_peer_missing',
               result: {},
             };
             client.sendMessage('COMMAND_RESULT', failPayload);

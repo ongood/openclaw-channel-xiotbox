@@ -69,6 +69,10 @@ function computeFingerprint(pubRaw: Buffer): string {
   return computeKeyId(pubRaw);
 }
 
+function computeFingerprintFull(pubRaw: Buffer): string {
+  return crypto.createHash('sha256').update(pubRaw).digest('hex');
+}
+
 function aesGcmEncrypt(key: Buffer, nonce: Buffer, plaintext: Buffer, aad?: Buffer | null): Buffer {
   const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
   if (aad && aad.length) {
@@ -180,6 +184,178 @@ function resolveKeyPath(cfg: any, deviceId: string): string {
   return path.join(base, `xiotbox_e2e_${deviceId}.json`);
 }
 
+function resolveIdentityPath(cfg: any, deviceId: string): string {
+  if (cfg?.IDENTITY_KEY_PATH) return cfg.IDENTITY_KEY_PATH;
+  const base = path.join(os.homedir(), '.openclaw');
+  return path.join(base, `xiotbox_identity_${deviceId}.json`);
+}
+
+function loadIdentity(cfg: any, deviceId: string): { privDer: Buffer; pubDer: Buffer } | null {
+  const keyPath = resolveIdentityPath(cfg, deviceId);
+  if (!fs.existsSync(keyPath)) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(keyPath, 'utf-8'));
+    const privDer = b64d(raw.priv_b64 || '');
+    const pubDer = b64d(raw.pub_b64 || '');
+    if (!privDer.length || !pubDer.length) return null;
+    return { privDer, pubDer };
+  } catch (_err) {
+    return null;
+  }
+}
+
+function saveIdentity(cfg: any, deviceId: string, privDer: Buffer, pubDer: Buffer): { privDer: Buffer; pubDer: Buffer } {
+  const keyPath = resolveIdentityPath(cfg, deviceId);
+  const dir = path.dirname(keyPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const payload = {
+    v: 1,
+    alg: 'ed25519',
+    priv_b64: b64e(privDer),
+    pub_b64: b64e(pubDer),
+  };
+  fs.writeFileSync(keyPath, JSON.stringify(payload));
+  try {
+    fs.chmodSync(keyPath, 0o600);
+  } catch (_err) {
+    // best effort
+  }
+  return { privDer, pubDer };
+}
+
+function generateIdentity(cfg: any, deviceId: string): { privDer: Buffer; pubDer: Buffer } {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+  const privDer = privateKey.export({ format: 'der', type: 'pkcs8' });
+  const pubDer = publicKey.export({ format: 'der', type: 'spki' });
+  return saveIdentity(cfg, deviceId, privDer, pubDer);
+}
+
+function ensureIdentity(cfg: any, deviceId: string): { privDer: Buffer; pubDer: Buffer } {
+  const existing = loadIdentity(cfg, deviceId);
+  if (existing) return existing;
+  return generateIdentity(cfg, deviceId);
+}
+
+function buildIdentitySigPayload(meta: {
+  device_id: string;
+  peer_pub: string;
+  peer_key_id: string;
+  sig_ts: string;
+  sig_nonce: string;
+}): Buffer {
+  const parts = [
+    'v=1',
+    `device=${meta.device_id || ''}`,
+    `peer_pub=${meta.peer_pub || ''}`,
+    `peer_key_id=${meta.peer_key_id || ''}`,
+    `ts=${meta.sig_ts || ''}`,
+    `nonce=${meta.sig_nonce || ''}`,
+  ];
+  return Buffer.from(`ocid|${parts.join('|')}`, 'utf-8');
+}
+
+function resolveTrustPath(cfg: any, deviceId: string): string {
+  if (cfg?.TRUST_PATH) return cfg.TRUST_PATH;
+  const base = path.join(os.homedir(), '.openclaw');
+  return path.join(base, `xiotbox_trust_${deviceId}.json`);
+}
+
+function loadTrust(cfg: any, deviceId: string): Record<string, any> | null {
+  const trustPath = resolveTrustPath(cfg, deviceId);
+  if (!fs.existsSync(trustPath)) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(trustPath, 'utf-8'));
+    if (!raw || typeof raw !== 'object') return null;
+    return raw;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function saveTrust(cfg: any, deviceId: string, data: Record<string, any>) {
+  const trustPath = resolveTrustPath(cfg, deviceId);
+  const dir = path.dirname(trustPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(trustPath, JSON.stringify(data));
+  try {
+    fs.chmodSync(trustPath, 0o600);
+  } catch (_err) {
+    // best effort
+  }
+}
+
+function extractClientIdentity(result: any): {
+  pubDerB64: string;
+  fingerprint: string;
+  sigB64: string;
+  sigAlg: string;
+  sigTs: string;
+  sigNonce: string;
+} {
+  return {
+    pubDerB64: result?.client_identity_public_key || result?.identity_pub || '',
+    fingerprint: result?.client_identity_fingerprint || result?.identity_fingerprint || '',
+    sigB64: result?.client_identity_sig || result?.identity_sig || '',
+    sigAlg: result?.client_identity_sig_alg || result?.identity_sig_alg || 'ed25519',
+    sigTs: String(result?.client_identity_sig_ts || result?.identity_sig_ts || ''),
+    sigNonce: String(result?.client_identity_sig_nonce || result?.identity_sig_nonce || ''),
+  };
+}
+
+function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log?: any): { ok: boolean; fp: string; err: string } {
+  const clientPub = String(result?.client_public_key || '');
+  const clientKeyId = String(result?.client_key_id || '');
+  if (!clientPub) return { ok: false, fp: '', err: 'e2e_peer_missing' };
+
+  const identity = extractClientIdentity(result);
+  if (!identity.pubDerB64 || !identity.sigB64) return { ok: false, fp: '', err: 'client_identity_missing' };
+  const alg = String(identity.sigAlg || 'ed25519').toLowerCase().trim();
+  if (alg && alg !== 'ed25519') return { ok: false, fp: '', err: 'client_identity_unsupported_alg' };
+
+  let pubDer: Buffer;
+  let sig: Buffer;
+  try {
+    pubDer = b64d(identity.pubDerB64);
+    sig = b64d(identity.sigB64);
+  } catch (_err) {
+    return { ok: false, fp: '', err: 'client_identity_invalid' };
+  }
+  if (!pubDer.length || !sig.length) return { ok: false, fp: '', err: 'client_identity_invalid' };
+
+  const fp = computeFingerprintFull(pubDer);
+  const sigPayload = buildIdentitySigPayload({
+    device_id: deviceId,
+    peer_pub: clientPub,
+    peer_key_id: clientKeyId,
+    sig_ts: identity.sigTs,
+    sig_nonce: identity.sigNonce,
+  });
+
+  try {
+    const pubKey = crypto.createPublicKey({ key: pubDer, format: 'der', type: 'spki' });
+    const ok = crypto.verify(null, sigPayload, pubKey, sig);
+    if (!ok) return { ok: false, fp, err: 'client_identity_invalid' };
+  } catch (_err) {
+    return { ok: false, fp, err: 'client_identity_invalid' };
+  }
+
+  const trust = loadTrust(cfg, deviceId) || { v: 1 };
+  const pinnedFp = String(trust?.client_identity_fingerprint || '').trim();
+  if (!pinnedFp) {
+    trust.client_identity_fingerprint = fp;
+    trust.client_identity_public_key = identity.pubDerB64;
+    trust.updated_at = Date.now();
+    saveTrust(cfg, deviceId, trust);
+    log?.info?.(`[XiotBox] Pinned client identity fingerprint: ${fp.slice(0, 12)}...`);
+    return { ok: true, fp, err: '' };
+  }
+  if (pinnedFp !== fp) {
+    log?.error?.(`[XiotBox] Client identity changed (pinned=${pinnedFp.slice(0, 12)}... got=${fp.slice(0, 12)}...)`);
+    return { ok: false, fp, err: 'client_identity_changed' };
+  }
+  return { ok: true, fp, err: '' };
+}
+
 function loadKeypair(cfg: any, deviceId: string): { priv: Buffer; pub: Buffer; keyId: string } | null {
   const keyPath = resolveKeyPath(cfg, deviceId);
   if (!fs.existsSync(keyPath)) return null;
@@ -281,8 +457,12 @@ export class OpenClawE2E {
   privRaw: Buffer | null = null;
   pubRaw: Buffer | null = null;
   keyId: string = '';
+  identityPrivKey: crypto.KeyObject | null = null;
+  identityPubDer: Buffer | null = null;
+  identityFingerprint: string = '';
   peerPublicKey: string = '';
   peerKeyId: string = '';
+  peerTrustError: string = '';
   threadId: string = '';
   encV: number = E2E_VERSION;
 
@@ -299,6 +479,17 @@ export class OpenClawE2E {
     this.privRaw = keypair.priv;
     this.pubRaw = keypair.pub;
     this.keyId = keypair.keyId;
+    try {
+      const identity = ensureIdentity(this.cfg, this.cfg.DEVICE_ID);
+      this.identityPrivKey = crypto.createPrivateKey({ key: identity.privDer, format: 'der', type: 'pkcs8' });
+      this.identityPubDer = identity.pubDer;
+      this.identityFingerprint = computeFingerprintFull(identity.pubDer);
+    } catch (err: any) {
+      this.identityPrivKey = null;
+      this.identityPubDer = null;
+      this.identityFingerprint = '';
+      this.log?.warn?.(`[XiotBox] Identity key init failed: ${err?.message || err}`);
+    }
     if (this.log?.info) {
       const backend = HAS_NATIVE_X25519 ? 'native' : 'noble';
       this.log.info(`[XiotBox] E2E x25519 backend: ${backend}`);
@@ -330,8 +521,24 @@ export class OpenClawE2E {
       }
       throw err;
     }
-    this.peerPublicKey = result?.client_public_key || '';
-    this.peerKeyId = result?.client_key_id || '';
+    const clientPub = result?.client_public_key || '';
+    const clientKeyId = result?.client_key_id || '';
+    if (clientPub) {
+      const verified = verifyAndPinClientIdentity(this.cfg, this.cfg.DEVICE_ID, result, this.log);
+      if (!verified.ok) {
+        this.peerPublicKey = '';
+        this.peerKeyId = '';
+        this.peerTrustError = verified.err || 'client_identity_invalid';
+        throw new Error(this.peerTrustError);
+      }
+      this.peerPublicKey = clientPub;
+      this.peerKeyId = clientKeyId;
+      this.peerTrustError = '';
+    } else {
+      this.peerPublicKey = '';
+      this.peerKeyId = '';
+      this.peerTrustError = 'e2e_peer_missing';
+    }
     this.threadId = result?.thread_id || '';
     this.encV = result?.enc_v || E2E_VERSION;
     return result;
@@ -339,13 +546,38 @@ export class OpenClawE2E {
 
   helloPayload() {
     if (!this.pubRaw) return null;
-    return {
-      pubkey: b64e(this.pubRaw),
-      key_id: this.keyId || computeKeyId(this.pubRaw),
+    const peerPub = b64e(this.pubRaw);
+    const peerKeyId = this.keyId || computeKeyId(this.pubRaw);
+    const payload: Record<string, any> = {
+      pubkey: peerPub,
+      key_id: peerKeyId,
       algo: E2E_KEY_ALG,
       enc_v: this.encV || E2E_VERSION,
       fingerprint: computeFingerprint(this.pubRaw),
     };
+    if (this.identityPrivKey && this.identityPubDer) {
+      const sigTs = String(Date.now());
+      const sigNonce = crypto.randomBytes(16).toString('hex');
+      const sigPayload = buildIdentitySigPayload({
+        device_id: this.cfg.DEVICE_ID,
+        peer_pub: peerPub,
+        peer_key_id: peerKeyId,
+        sig_ts: sigTs,
+        sig_nonce: sigNonce,
+      });
+      try {
+        const sig = crypto.sign(null, sigPayload, this.identityPrivKey);
+        payload.identity_pub = b64e(this.identityPubDer);
+        payload.identity_fingerprint = this.identityFingerprint || computeFingerprintFull(this.identityPubDer);
+        payload.identity_sig = b64e(sig);
+        payload.identity_sig_alg = 'ed25519';
+        payload.identity_sig_ts = sigTs;
+        payload.identity_sig_nonce = sigNonce;
+      } catch (err: any) {
+        this.log?.warn?.(`[XiotBox] Identity signature failed: ${err?.message || err}`);
+      }
+    }
+    return payload;
   }
 
   buildAad(meta: {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.13}"
+TAG="${1:-1.0.14}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
 EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/openclaw-channel-xiotbox}"
@@ -111,6 +111,8 @@ if [ -f "$CFG_PATH" ]; then
   export XIOTBOX_API_BASE="${XIOTBOX_API_BASE:-}"
   export XIOTBOX_E2E_KEY_PATH="${XIOTBOX_E2E_KEY_PATH:-}"
   export XIOTBOX_E2E_ROTATE="${XIOTBOX_E2E_ROTATE:-}"
+  export XIOTBOX_IDENTITY_KEY_PATH="${XIOTBOX_IDENTITY_KEY_PATH:-}"
+  export XIOTBOX_TRUST_PATH="${XIOTBOX_TRUST_PATH:-}"
   export XIOTBOX_USE_QUERY_AUTH="${XIOTBOX_USE_QUERY_AUTH:-}"
   missing=$(python3 - <<'PY'
 import json
@@ -152,6 +154,10 @@ if os.environ.get("XIOTBOX_E2E_KEY_PATH"):
     xiot["E2E_KEY_PATH"] = pick("E2E_KEY_PATH", "XIOTBOX_E2E_KEY_PATH")
 if os.environ.get("XIOTBOX_E2E_ROTATE"):
     xiot["E2E_ROTATE"] = pick("E2E_ROTATE", "XIOTBOX_E2E_ROTATE")
+if os.environ.get("XIOTBOX_IDENTITY_KEY_PATH"):
+    xiot["IDENTITY_KEY_PATH"] = pick("IDENTITY_KEY_PATH", "XIOTBOX_IDENTITY_KEY_PATH")
+if os.environ.get("XIOTBOX_TRUST_PATH"):
+    xiot["TRUST_PATH"] = pick("TRUST_PATH", "XIOTBOX_TRUST_PATH")
 if os.environ.get("XIOTBOX_USE_QUERY_AUTH"):
     xiot["USE_QUERY_AUTH"] = pick("USE_QUERY_AUTH", "XIOTBOX_USE_QUERY_AUTH")
 
