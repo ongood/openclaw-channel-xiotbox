@@ -297,9 +297,17 @@ export class OpenClawE2E {
       Authorization: `Bearer ${this.cfg.DEVICE_TOKEN}`,
       'X-Device-Id': this.cfg.DEVICE_ID,
     };
+    const payload = {};
+    if (this.pubRaw) {
+      payload.pubkey = b64e(this.pubRaw);
+      payload.key_id = this.keyId || computeKeyId(this.pubRaw);
+      payload.algo = E2E_KEY_ALG;
+      payload.enc_v = this.encV || E2E_VERSION;
+      payload.fingerprint = computeFingerprint(this.pubRaw);
+    }
     let result;
     try {
-      result = await postJsonRpc(url, {}, headers);
+      result = await postJsonRpc(url, payload, headers);
     } catch (err) {
       if (!this.cfg.API_BASE_URL) {
         throw new Error('missing_api_base');
