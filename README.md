@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.11
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.12
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -29,7 +29,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.11
+bash scripts/update_openclaw_xiotbox.sh 1.0.12
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -73,11 +73,16 @@ CLAWDBOT_AGENT_ID=main
 XIOTBOX_GATEWAY_WSS=wss://your-xiotbox-server.com:9002/ws/openclaw
 XIOTBOX_DEVICE_ID=your_device_id
 XIOTBOX_DEVICE_TOKEN=your_device_token
-# Optional: HTTP API base (used for E2E peer key fetch)
-# XIOTBOX_API_BASE=https://your-xiotbox-server.com
+# Optional: HTTP API base (required when WSS host is socketd domain)
+# If not set and /openclaw/devices/e2e/peer_key returns 404, set this.
+# XIOTBOX_API_BASE=https://your-odoo-api.com
 # Optional: E2E key storage path / rotation
 # XIOTBOX_E2E_KEY_PATH=/var/lib/openclaw/xiotbox_e2e.json
 # XIOTBOX_E2E_ROTATE=1
+# Optional: x25519 backend (default uses noble JS implementation)
+# XIOTBOX_FORCE_NOBLE_X25519=1
+# If you want to try native x25519 when supported:
+# XIOTBOX_PREFER_NATIVE_X25519=1
 # 可选：如果网关只支持 query 认证，设置为 true
 # USE_QUERY_AUTH=true
 # Or use PAIR_CODE for first time setup if supported by wss_client
