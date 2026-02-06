@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.14}"
+TAG="${1:-1.0.15}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
 EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/openclaw-channel-xiotbox}"

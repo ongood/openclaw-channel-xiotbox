@@ -128,6 +128,9 @@ export const xiotboxPlugin = {
         e2e: e2e.helloPayload(),
         thread_id: e2e.threadId || undefined,
       };
+      // Ensure the very first HELLO after connect carries E2E identity claim.
+      // WSSClient captures HELLO_EXTRA during construction; update it explicitly.
+      client.setHelloExtra(finalCfg.HELLO_EXTRA);
 
       const pruneCache = () => {
         const now = Date.now();

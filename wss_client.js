@@ -154,7 +154,9 @@ class WSSClient extends EventEmitter {
                 hostname: os.hostname()
             }
         };
-        const extra = this.helloExtra || this.config.HELLO_EXTRA || {};
+        // Merge so late-bound config.HELLO_EXTRA still works even if helloExtra was
+        // initialized as an empty object at construction time.
+        const extra = { ...(this.config?.HELLO_EXTRA || {}), ...(this.helloExtra || {}) };
         if (extra.thread_id) {
             payload.thread_id = extra.thread_id;
         }
