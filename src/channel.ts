@@ -179,13 +179,24 @@ export const xiotboxPlugin = {
           const incoming = payload?.payload || payload || {};
           // Always refresh client peer key before handling a command.
           // This avoids encrypting reply with stale key after mobile/desktop key rotation.
+          const cachedPeerPublicKey = e2e.peerPublicKey || '';
+          const cachedPeerKeyId = e2e.peerKeyId || '';
           try {
             await e2e.refreshPeerKey();
           } catch (err: any) {
-            // Never continue with a potentially stale key; fail fast.
-            e2e.peerPublicKey = '';
-            e2e.peerKeyId = '';
-            e2e.peerTrustError = err?.message || 'e2e_peer_refresh_failed';
+            const refreshErr = err?.message || 'e2e_peer_refresh_failed';
+            // Preserve service continuity for existing sessions:
+            // if a previously trusted key exists, keep using it for this command.
+            if (cachedPeerPublicKey) {
+              e2e.peerPublicKey = cachedPeerPublicKey;
+              e2e.peerKeyId = cachedPeerKeyId;
+              e2e.peerTrustError = refreshErr;
+              log?.warn?.(`[XiotBox] E2E peer key refresh failed, fallback to cached key: ${refreshErr}`);
+            } else {
+              e2e.peerPublicKey = '';
+              e2e.peerKeyId = '';
+              e2e.peerTrustError = refreshErr;
+            }
           }
           const env = (incoming?.magic === 'OGE2E1' ? incoming : incoming?.e2e) || null;
           if (!env || env.magic !== 'OGE2E1') {
