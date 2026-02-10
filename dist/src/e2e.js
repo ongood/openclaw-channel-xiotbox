@@ -746,6 +746,18 @@ export class OpenClawE2E {
     if (this.peerPublicKey) {
       pushPeer({ publicKey: this.peerPublicKey, keyId: this.peerKeyId || '' });
     }
+    const advertisedPeers = payload?.client_peer_keys || payload?.client_peers;
+    if (Array.isArray(advertisedPeers)) {
+      for (const item of advertisedPeers) {
+        if (!item || typeof item !== 'object') continue;
+        const pub = String(
+          item.client_public_key || item.public_key || item.pubkey || item.peer_public_key || '',
+        ).trim();
+        const keyId = String(item.client_key_id || item.key_id || item.peer_key_id || '').trim();
+        if (!pub) continue;
+        pushPeer({ publicKey: pub, keyId });
+      }
+    }
     for (const peer of loadTrustedClientPeers(this.cfg, this.cfg.DEVICE_ID)) {
       pushPeer(peer);
     }
