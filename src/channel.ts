@@ -213,18 +213,6 @@ export const xiotboxPlugin = {
             setCached(cmdId, failPayload);
             return;
           }
-          if (!e2e.peerPublicKey) {
-            const failPayload = {
-              command_id: cmdId,
-              status: 'failed',
-              trace_id: traceId,
-              error: e2e.peerTrustError || 'e2e_peer_missing',
-              result: {},
-            };
-            client.sendMessage('COMMAND_RESULT', failPayload);
-            setCached(cmdId, failPayload);
-            return;
-          }
           const contentType = incoming?.content_type || incoming?.contentType || 'text/markdown';
           const threadId = incoming?.thread_id || e2e.threadId || '';
           let text = '';
@@ -250,6 +238,56 @@ export const xiotboxPlugin = {
             setCached(cmdId, failPayload);
             return;
           }
+          const replyPeers = e2e.collectReplyPeers(incoming);
+          if (!replyPeers.length) {
+            const failPayload = {
+              command_id: cmdId,
+              status: 'failed',
+              trace_id: traceId,
+              error: e2e.peerTrustError || 'e2e_peer_missing',
+              result: {},
+            };
+            client.sendMessage('COMMAND_RESULT', failPayload);
+            setCached(cmdId, failPayload);
+            return;
+          }
+          const buildEncryptedResult = (replyText: string, seq: number) => {
+            const e2eMulti: Record<string, any> = {};
+            let primaryEnv: any = null;
+            let primaryKeyId = '';
+            for (const peer of replyPeers) {
+              const envOut = e2e.encryptText(
+                replyText,
+                {
+                  direction: 'p2c',
+                  device_id: finalCfg.DEVICE_ID,
+                  thread_id: threadId,
+                  command_id: cmdId,
+                  content_type: contentType,
+                  chunk_seq: seq,
+                  enc_v: e2e.encV,
+                },
+                {
+                  publicKey: peer.publicKey,
+                  keyId: peer.keyId,
+                },
+              );
+              const envKeyId = peer.keyId || envOut?.key_id || '';
+              if (!primaryEnv) {
+                primaryEnv = envOut;
+                primaryKeyId = envKeyId;
+              }
+              e2eMulti[envKeyId || `peer_${Object.keys(e2eMulti).length}`] = envOut;
+            }
+            return {
+              e2e: primaryEnv,
+              e2e_multi: e2eMulti,
+              result_key_id: primaryKeyId,
+              enc_v: e2e.encV,
+              content_type: contentType,
+              chunk_seq: seq,
+            };
+          };
           const sessionKey = `xiotbox:${finalCfg.DEVICE_ID}`;
 
           const inboundCtx = {
@@ -289,25 +327,11 @@ export const xiotboxPlugin = {
             if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
             lastStreamAt = now;
             chunkSeq += 1;
-            const envOut = e2e.encryptText(replyText, {
-              direction: 'p2c',
-              device_id: finalCfg.DEVICE_ID,
-              thread_id: threadId,
-              command_id: cmdId,
-              content_type: contentType,
-              chunk_seq: chunkSeq,
-              enc_v: e2e.encV,
-            });
             client.sendMessage('COMMAND_RESULT', {
               command_id: cmdId,
               status: 'running',
               trace_id: traceId,
-              result: {
-                e2e: envOut,
-                enc_v: e2e.encV,
-                content_type: contentType,
-                chunk_seq: chunkSeq,
-              },
+              result: buildEncryptedResult(replyText, chunkSeq),
             });
           };
 
@@ -323,49 +347,21 @@ export const xiotboxPlugin = {
 
           const finalText = normalizeTextPayload(queuedFinal) || lastText || '';
           if (!shouldSkipReply(finalText)) {
-            const envOut = e2e.encryptText(finalText, {
-              direction: 'p2c',
-              device_id: finalCfg.DEVICE_ID,
-              thread_id: threadId,
-              command_id: cmdId,
-              content_type: contentType,
-              chunk_seq: chunkSeq,
-              enc_v: e2e.encV,
-            });
             const successPayload = {
               command_id: cmdId,
               status: 'success',
               trace_id: traceId,
-              result: {
-                e2e: envOut,
-                enc_v: e2e.encV,
-                content_type: contentType,
-                chunk_seq: chunkSeq,
-              },
+              result: buildEncryptedResult(finalText, chunkSeq),
             };
             client.sendMessage('COMMAND_RESULT', successPayload);
             setCached(cmdId, successPayload);
           } else {
             // Still finalize to avoid hanging commands
-            const envOut = e2e.encryptText('', {
-              direction: 'p2c',
-              device_id: finalCfg.DEVICE_ID,
-              thread_id: threadId,
-              command_id: cmdId,
-              content_type: contentType,
-              chunk_seq: chunkSeq,
-              enc_v: e2e.encV,
-            });
             const emptyPayload = {
               command_id: cmdId,
               status: 'success',
               trace_id: traceId,
-              result: {
-                e2e: envOut,
-                enc_v: e2e.encV,
-                content_type: contentType,
-                chunk_seq: chunkSeq,
-              },
+              result: buildEncryptedResult('', chunkSeq),
             };
             client.sendMessage('COMMAND_RESULT', emptyPayload);
             setCached(cmdId, emptyPayload);

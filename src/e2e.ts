@@ -349,7 +349,17 @@ function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log
 
   const now = Date.now();
   const trust = loadTrust(cfg, deviceId) || { v: 2 };
-  const identities: Record<string, { pub_der_b64: string; added_at: number; last_seen_at: number }> = {};
+  const identities: Record<
+    string,
+    {
+      pub_der_b64: string;
+      added_at: number;
+      last_seen_at: number;
+      client_pub_b64?: string;
+      client_key_id?: string;
+      peer_seen_at?: number;
+    }
+  > = {};
   const existingSet = trust?.client_identities;
   if (existingSet && typeof existingSet === 'object') {
     for (const [k, v] of Object.entries(existingSet)) {
@@ -358,6 +368,9 @@ function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log
         pub_der_b64: String((v as any).pub_der_b64 || ''),
         added_at: Number((v as any).added_at || now),
         last_seen_at: Number((v as any).last_seen_at || now),
+        client_pub_b64: String((v as any).client_pub_b64 || ''),
+        client_key_id: String((v as any).client_key_id || ''),
+        peer_seen_at: Number((v as any).peer_seen_at || 0),
       };
     }
   }
@@ -380,6 +393,9 @@ function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log
       pub_der_b64: identity.pubDerB64,
       added_at: now,
       last_seen_at: now,
+      client_pub_b64: clientPub,
+      client_key_id: clientKeyId,
+      peer_seen_at: now,
     };
     saveTrust(cfg, deviceId, {
       v: 2,
@@ -396,6 +412,9 @@ function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log
     if (!known.pub_der_b64) {
       known.pub_der_b64 = identity.pubDerB64;
     }
+    known.client_pub_b64 = clientPub;
+    known.client_key_id = clientKeyId;
+    known.peer_seen_at = now;
     saveTrust(cfg, deviceId, {
       v: 2,
       client_identities: identities,
@@ -409,6 +428,9 @@ function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log
       pub_der_b64: identity.pubDerB64,
       added_at: now,
       last_seen_at: now,
+      client_pub_b64: clientPub,
+      client_key_id: clientKeyId,
+      peer_seen_at: now,
     };
     saveTrust(cfg, deviceId, {
       v: 2,
@@ -423,6 +445,27 @@ function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log
     `[XiotBox] Client identity changed (known=${knownKeys.map((x) => x.slice(0, 12)).join(',')} got=${fp.slice(0, 12)}...)`,
   );
   return { ok: false, fp, err: 'client_identity_changed' };
+}
+
+function loadTrustedClientPeers(cfg: any, deviceId: string): Array<{ publicKey: string; keyId: string }> {
+  const trust = loadTrust(cfg, deviceId) || {};
+  const peers: Array<{ publicKey: string; keyId: string }> = [];
+  const seen = new Set<string>();
+  const identities = trust?.client_identities;
+  if (!identities || typeof identities !== 'object') return peers;
+  for (const v of Object.values(identities)) {
+    if (!v || typeof v !== 'object') continue;
+    const pub = String((v as any).client_pub_b64 || '').trim();
+    if (!pub) continue;
+    const raw = decodePubkey(pub);
+    if (!raw || raw.length !== PUBKEY_LEN) continue;
+    const keyId = String((v as any).client_key_id || '').trim() || computeKeyId(raw);
+    const dedupeKey = `${keyId}|${b64e(raw)}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    peers.push({ publicKey: b64e(raw), keyId });
+  }
+  return peers;
 }
 
 function loadKeypair(cfg: any, deviceId: string): { priv: Buffer; pub: Buffer; keyId: string } | null {
@@ -677,11 +720,70 @@ export class OpenClawE2E {
     return raw;
   }
 
-  encryptText(text: string, meta: any) {
+  resolveCommandPeerFromPayload(payload: any): { publicKey: string; keyId: string } | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const clientPub = String(payload?.client_public_key || payload?.client_pubkey || '').trim();
+    if (!clientPub) return null;
+    const clientRaw = decodePubkey(clientPub);
+    if (!clientRaw || clientRaw.length !== PUBKEY_LEN) return null;
+    const clientKeyId = String(payload?.client_key_id || '').trim() || computeKeyId(clientRaw);
+    const verified = verifyAndPinClientIdentity(
+      this.cfg,
+      this.cfg.DEVICE_ID,
+      {
+        client_public_key: b64e(clientRaw),
+        client_key_id: clientKeyId,
+        client_identity_public_key:
+          payload?.client_identity_public_key || payload?.identity_pub || payload?.client_identity_pub || '',
+        client_identity_fingerprint:
+          payload?.client_identity_fingerprint || payload?.identity_fingerprint || '',
+        client_identity_sig: payload?.client_identity_sig || payload?.identity_sig || '',
+        client_identity_sig_alg: payload?.client_identity_sig_alg || payload?.identity_sig_alg || '',
+        client_identity_sig_ts: payload?.client_identity_sig_ts || payload?.identity_sig_ts || '',
+        client_identity_sig_nonce: payload?.client_identity_sig_nonce || payload?.identity_sig_nonce || '',
+      },
+      this.log,
+    );
+    if (!verified.ok) {
+      this.log?.warn?.(
+        `[XiotBox] Command peer identity rejected err=${verified.err || 'client_identity_invalid'} key=${clientKeyId.slice(0, 8)}...`,
+      );
+      return null;
+    }
+    return { publicKey: b64e(clientRaw), keyId: clientKeyId };
+  }
+
+  collectReplyPeers(payload: any): Array<{ publicKey: string; keyId: string }> {
+    const peers: Array<{ publicKey: string; keyId: string }> = [];
+    const seen = new Set<string>();
+    const pushPeer = (peer: { publicKey: string; keyId: string } | null) => {
+      if (!peer) return;
+      const raw = decodePubkey(peer.publicKey || '');
+      if (!raw || raw.length !== PUBKEY_LEN) return;
+      const keyId = String(peer.keyId || '').trim() || computeKeyId(raw);
+      const pubB64 = b64e(raw);
+      const dedupeKey = `${keyId}|${pubB64}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      peers.push({ publicKey: pubB64, keyId });
+    };
+
+    if (this.peerPublicKey) {
+      pushPeer({ publicKey: this.peerPublicKey, keyId: this.peerKeyId || '' });
+    }
+    pushPeer(this.resolveCommandPeerFromPayload(payload));
+    for (const peer of loadTrustedClientPeers(this.cfg, this.cfg.DEVICE_ID)) {
+      pushPeer(peer);
+    }
+    return peers;
+  }
+
+  encryptText(text: string, meta: any, peer?: { publicKey?: string; keyId?: string }) {
     if (!this.pubRaw || !this.privRaw) throw new Error('missing_keypair');
-    const peerRaw = this.ensurePeerKey();
+    const peerRaw = peer?.publicKey ? decodePubkey(peer.publicKey) : this.ensurePeerKey();
+    if (!peerRaw) throw new Error('missing_peer_key');
     const aad = this.buildAad(meta);
-    const keyId = this.peerKeyId || computeKeyId(peerRaw);
+    const keyId = String(peer?.keyId || this.peerKeyId || '').trim() || computeKeyId(peerRaw);
     return buildEnvelope(Buffer.from(text || '', 'utf-8'), peerRaw, keyId || '', aad);
   }
 
