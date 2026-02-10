@@ -719,11 +719,37 @@ export class OpenClawE2E {
   }
 
   collectReplyPeers(payload) {
-    const peer = this.resolveCommandPeerFromPayload(payload);
-    if (!peer && !this.peerTrustError) {
-      this.peerTrustError = 'e2e_peer_missing';
+    const primary = this.resolveCommandPeerFromPayload(payload);
+    if (!primary) {
+      if (!this.peerTrustError) {
+        this.peerTrustError = 'e2e_peer_missing';
+      }
+      return [];
     }
-    return peer ? [peer] : [];
+
+    const peers = [];
+    const seen = new Set();
+    const pushPeer = (peer) => {
+      if (!peer) return;
+      const raw = decodePubkey(peer.publicKey || '');
+      if (!raw || raw.length !== PUBKEY_LEN) return;
+      const keyId = String(peer.keyId || '').trim() || computeKeyId(raw);
+      const pubB64 = b64e(raw);
+      const dedupeKey = `${keyId}|${pubB64}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      peers.push({ publicKey: pubB64, keyId });
+    };
+
+    // Keep request sender as first/primary recipient for deterministic routing.
+    pushPeer(primary);
+    if (this.peerPublicKey) {
+      pushPeer({ publicKey: this.peerPublicKey, keyId: this.peerKeyId || '' });
+    }
+    for (const peer of loadTrustedClientPeers(this.cfg, this.cfg.DEVICE_ID)) {
+      pushPeer(peer);
+    }
+    return peers;
   }
 
   encryptText(text, meta, peer) {

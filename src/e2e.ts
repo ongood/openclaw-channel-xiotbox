@@ -766,11 +766,37 @@ export class OpenClawE2E {
   }
 
   collectReplyPeers(payload: any): Array<{ publicKey: string; keyId: string }> {
-    const peer = this.resolveCommandPeerFromPayload(payload);
-    if (!peer && !this.peerTrustError) {
-      this.peerTrustError = 'e2e_peer_missing';
+    const primary = this.resolveCommandPeerFromPayload(payload);
+    if (!primary) {
+      if (!this.peerTrustError) {
+        this.peerTrustError = 'e2e_peer_missing';
+      }
+      return [];
     }
-    return peer ? [peer] : [];
+
+    const peers: Array<{ publicKey: string; keyId: string }> = [];
+    const seen = new Set<string>();
+    const pushPeer = (peer: { publicKey: string; keyId: string } | null) => {
+      if (!peer) return;
+      const raw = decodePubkey(peer.publicKey || '');
+      if (!raw || raw.length !== PUBKEY_LEN) return;
+      const keyId = String(peer.keyId || '').trim() || computeKeyId(raw);
+      const pubB64 = b64e(raw);
+      const dedupeKey = `${keyId}|${pubB64}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      peers.push({ publicKey: pubB64, keyId });
+    };
+
+    // Keep request sender as first/primary recipient for deterministic routing.
+    pushPeer(primary);
+    if (this.peerPublicKey) {
+      pushPeer({ publicKey: this.peerPublicKey, keyId: this.peerKeyId || '' });
+    }
+    for (const peer of loadTrustedClientPeers(this.cfg, this.cfg.DEVICE_ID)) {
+      pushPeer(peer);
+    }
+    return peers;
   }
 
   encryptText(text: string, meta: any, peer?: { publicKey?: string; keyId?: string }) {
