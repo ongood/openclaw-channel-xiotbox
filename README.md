@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.18
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.19
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -29,7 +29,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.18
+bash scripts/update_openclaw_xiotbox.sh 1.0.19
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -82,6 +82,9 @@ XIOTBOX_DEVICE_TOKEN=your_device_token
 # Optional: identity key (ed25519) + trust DB (pinned client identity)
 # XIOTBOX_IDENTITY_KEY_PATH=/var/lib/openclaw/xiotbox_identity.json
 # XIOTBOX_TRUST_PATH=/var/lib/openclaw/xiotbox_trust.json
+# Optional: enroll additional client identity once (for multi-endpoint PC+iOS)
+# Keep disabled by default; enable briefly during first pairing on a new endpoint.
+# XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES=1
 # Optional: x25519 backend (default uses noble JS implementation)
 # XIOTBOX_FORCE_NOBLE_X25519=1
 # If you want to try native x25519 when supported:

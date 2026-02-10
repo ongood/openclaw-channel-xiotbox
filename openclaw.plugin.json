@@ -55,6 +55,13 @@
             },
             "TRUST_PATH": {
                 "type": "string"
+            },
+            "ALLOW_NEW_CLIENT_IDENTITIES": {
+                "type": [
+                    "string",
+                    "boolean",
+                    "number"
+                ]
             }
         }
     }

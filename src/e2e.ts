@@ -260,6 +260,10 @@ function resolveTrustPath(cfg: any, deviceId: string): string {
   return path.join(base, `xiotbox_trust_${deviceId}.json`);
 }
 
+function isTruthy(value: any): boolean {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').toLowerCase());
+}
+
 function loadTrust(cfg: any, deviceId: string): Record<string, any> | null {
   const trustPath = resolveTrustPath(cfg, deviceId);
   if (!fs.existsSync(trustPath)) return null;
@@ -323,6 +327,10 @@ function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log
   if (!pubDer.length || !sig.length) return { ok: false, fp: '', err: 'client_identity_invalid' };
 
   const fp = computeFingerprintFull(pubDer);
+  const claimedFp = String(identity.fingerprint || '').trim().toLowerCase();
+  if (claimedFp && claimedFp !== fp) {
+    return { ok: false, fp, err: 'client_identity_invalid' };
+  }
   const sigPayload = buildIdentitySigPayload({
     device_id: deviceId,
     peer_pub: clientPub,
@@ -339,21 +347,82 @@ function verifyAndPinClientIdentity(cfg: any, deviceId: string, result: any, log
     return { ok: false, fp, err: 'client_identity_invalid' };
   }
 
-  const trust = loadTrust(cfg, deviceId) || { v: 1 };
-  const pinnedFp = String(trust?.client_identity_fingerprint || '').trim();
-  if (!pinnedFp) {
-    trust.client_identity_fingerprint = fp;
-    trust.client_identity_public_key = identity.pubDerB64;
-    trust.updated_at = Date.now();
-    saveTrust(cfg, deviceId, trust);
-    log?.info?.(`[XiotBox] Pinned client identity fingerprint: ${fp.slice(0, 12)}...`);
+  const now = Date.now();
+  const trust = loadTrust(cfg, deviceId) || { v: 2 };
+  const identities: Record<string, { pub_der_b64: string; added_at: number; last_seen_at: number }> = {};
+  const existingSet = trust?.client_identities;
+  if (existingSet && typeof existingSet === 'object') {
+    for (const [k, v] of Object.entries(existingSet)) {
+      if (!k || !v || typeof v !== 'object') continue;
+      identities[k] = {
+        pub_der_b64: String((v as any).pub_der_b64 || ''),
+        added_at: Number((v as any).added_at || now),
+        last_seen_at: Number((v as any).last_seen_at || now),
+      };
+    }
+  }
+
+  // Backward compatibility: migrate legacy single-pin shape into set.
+  const legacyFp = String(trust?.client_identity_fingerprint || '').trim().toLowerCase();
+  const legacyPub = String(trust?.client_identity_public_key || '').trim();
+  if (legacyFp && legacyPub && !identities[legacyFp]) {
+    identities[legacyFp] = {
+      pub_der_b64: legacyPub,
+      added_at: Number(trust?.updated_at || now),
+      last_seen_at: Number(trust?.updated_at || now),
+    };
+  }
+
+  const allowNew = isTruthy(cfg?.ALLOW_NEW_CLIENT_IDENTITIES);
+  const knownKeys = Object.keys(identities);
+  if (knownKeys.length === 0) {
+    identities[fp] = {
+      pub_der_b64: identity.pubDerB64,
+      added_at: now,
+      last_seen_at: now,
+    };
+    saveTrust(cfg, deviceId, {
+      v: 2,
+      client_identities: identities,
+      updated_at: now,
+    });
+    log?.info?.(`[XiotBox] Pinned initial client identity fingerprint: ${fp.slice(0, 12)}...`);
     return { ok: true, fp, err: '' };
   }
-  if (pinnedFp !== fp) {
-    log?.error?.(`[XiotBox] Client identity changed (pinned=${pinnedFp.slice(0, 12)}... got=${fp.slice(0, 12)}...)`);
-    return { ok: false, fp, err: 'client_identity_changed' };
+
+  const known = identities[fp];
+  if (known) {
+    known.last_seen_at = now;
+    if (!known.pub_der_b64) {
+      known.pub_der_b64 = identity.pubDerB64;
+    }
+    saveTrust(cfg, deviceId, {
+      v: 2,
+      client_identities: identities,
+      updated_at: now,
+    });
+    return { ok: true, fp, err: '' };
   }
-  return { ok: true, fp, err: '' };
+
+  if (allowNew) {
+    identities[fp] = {
+      pub_der_b64: identity.pubDerB64,
+      added_at: now,
+      last_seen_at: now,
+    };
+    saveTrust(cfg, deviceId, {
+      v: 2,
+      client_identities: identities,
+      updated_at: now,
+    });
+    log?.warn?.(`[XiotBox] Enrolled additional client identity fingerprint: ${fp.slice(0, 12)}...`);
+    return { ok: true, fp, err: '' };
+  }
+
+  log?.error?.(
+    `[XiotBox] Client identity changed (known=${knownKeys.map((x) => x.slice(0, 12)).join(',')} got=${fp.slice(0, 12)}...)`,
+  );
+  return { ok: false, fp, err: 'client_identity_changed' };
 }
 
 function loadKeypair(cfg: any, deviceId: string): { priv: Buffer; pub: Buffer; keyId: string } | null {

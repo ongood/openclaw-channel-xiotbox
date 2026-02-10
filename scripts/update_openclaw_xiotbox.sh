@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.18}"
+TAG="${1:-1.0.19}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
 EXT_DIR="${OPENCLAW_EXT_DIR:-$HOME/.openclaw/extensions/openclaw-channel-xiotbox}"
@@ -113,6 +113,7 @@ if [ -f "$CFG_PATH" ]; then
   export XIOTBOX_E2E_ROTATE="${XIOTBOX_E2E_ROTATE:-}"
   export XIOTBOX_IDENTITY_KEY_PATH="${XIOTBOX_IDENTITY_KEY_PATH:-}"
   export XIOTBOX_TRUST_PATH="${XIOTBOX_TRUST_PATH:-}"
+  export XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES="${XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES:-}"
   export XIOTBOX_USE_QUERY_AUTH="${XIOTBOX_USE_QUERY_AUTH:-}"
   missing=$(python3 - <<'PY'
 import json
@@ -158,6 +159,8 @@ if os.environ.get("XIOTBOX_IDENTITY_KEY_PATH"):
     xiot["IDENTITY_KEY_PATH"] = pick("IDENTITY_KEY_PATH", "XIOTBOX_IDENTITY_KEY_PATH")
 if os.environ.get("XIOTBOX_TRUST_PATH"):
     xiot["TRUST_PATH"] = pick("TRUST_PATH", "XIOTBOX_TRUST_PATH")
+if os.environ.get("XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES"):
+    xiot["ALLOW_NEW_CLIENT_IDENTITIES"] = pick("ALLOW_NEW_CLIENT_IDENTITIES", "XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES")
 if os.environ.get("XIOTBOX_USE_QUERY_AUTH"):
     xiot["USE_QUERY_AUTH"] = pick("USE_QUERY_AUTH", "XIOTBOX_USE_QUERY_AUTH")
 

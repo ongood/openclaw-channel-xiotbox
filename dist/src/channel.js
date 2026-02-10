@@ -25,6 +25,8 @@ function buildConfig(cfg) {
     E2E_ROTATE: channelCfg.E2E_ROTATE || process.env.XIOTBOX_E2E_ROTATE,
     IDENTITY_KEY_PATH: channelCfg.IDENTITY_KEY_PATH || process.env.XIOTBOX_IDENTITY_KEY_PATH,
     TRUST_PATH: channelCfg.TRUST_PATH || process.env.XIOTBOX_TRUST_PATH,
+    ALLOW_NEW_CLIENT_IDENTITIES:
+      channelCfg.ALLOW_NEW_CLIENT_IDENTITIES ?? process.env.XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES,
   };
 }
 
