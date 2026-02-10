@@ -177,12 +177,15 @@ export const xiotboxPlugin = {
           });
 
           const incoming = payload?.payload || payload || {};
-          if (!e2e.peerPublicKey) {
-            try {
-              await e2e.refreshPeerKey();
-            } catch (_err) {
-              // keep going
-            }
+          // Always refresh client peer key before handling a command.
+          // This avoids encrypting reply with stale key after mobile/desktop key rotation.
+          try {
+            await e2e.refreshPeerKey();
+          } catch (err) {
+            // Never continue with a potentially stale key; fail fast.
+            e2e.peerPublicKey = '';
+            e2e.peerKeyId = '';
+            e2e.peerTrustError = err?.message || 'e2e_peer_refresh_failed';
           }
           const env = (incoming?.magic === 'OGE2E1' ? incoming : incoming?.e2e) || null;
           if (!env || env.magic !== 'OGE2E1') {
