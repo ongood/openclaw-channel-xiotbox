@@ -721,11 +721,21 @@ export class OpenClawE2E {
   }
 
   resolveCommandPeerFromPayload(payload: any): { publicKey: string; keyId: string } | null {
-    if (!payload || typeof payload !== 'object') return null;
+    this.peerTrustError = '';
+    if (!payload || typeof payload !== 'object') {
+      this.peerTrustError = 'e2e_peer_missing';
+      return null;
+    }
     const clientPub = String(payload?.client_public_key || payload?.client_pubkey || '').trim();
-    if (!clientPub) return null;
+    if (!clientPub) {
+      this.peerTrustError = 'e2e_peer_missing';
+      return null;
+    }
     const clientRaw = decodePubkey(clientPub);
-    if (!clientRaw || clientRaw.length !== PUBKEY_LEN) return null;
+    if (!clientRaw || clientRaw.length !== PUBKEY_LEN) {
+      this.peerTrustError = 'e2e_peer_missing';
+      return null;
+    }
     const clientKeyId = String(payload?.client_key_id || '').trim() || computeKeyId(clientRaw);
     const verified = verifyAndPinClientIdentity(
       this.cfg,
@@ -745,37 +755,22 @@ export class OpenClawE2E {
       this.log,
     );
     if (!verified.ok) {
+      this.peerTrustError = verified.err || 'client_identity_invalid';
       this.log?.warn?.(
         `[XiotBox] Command peer identity rejected err=${verified.err || 'client_identity_invalid'} key=${clientKeyId.slice(0, 8)}...`,
       );
       return null;
     }
+    this.peerTrustError = '';
     return { publicKey: b64e(clientRaw), keyId: clientKeyId };
   }
 
   collectReplyPeers(payload: any): Array<{ publicKey: string; keyId: string }> {
-    const peers: Array<{ publicKey: string; keyId: string }> = [];
-    const seen = new Set<string>();
-    const pushPeer = (peer: { publicKey: string; keyId: string } | null) => {
-      if (!peer) return;
-      const raw = decodePubkey(peer.publicKey || '');
-      if (!raw || raw.length !== PUBKEY_LEN) return;
-      const keyId = String(peer.keyId || '').trim() || computeKeyId(raw);
-      const pubB64 = b64e(raw);
-      const dedupeKey = `${keyId}|${pubB64}`;
-      if (seen.has(dedupeKey)) return;
-      seen.add(dedupeKey);
-      peers.push({ publicKey: pubB64, keyId });
-    };
-
-    if (this.peerPublicKey) {
-      pushPeer({ publicKey: this.peerPublicKey, keyId: this.peerKeyId || '' });
+    const peer = this.resolveCommandPeerFromPayload(payload);
+    if (!peer && !this.peerTrustError) {
+      this.peerTrustError = 'e2e_peer_missing';
     }
-    pushPeer(this.resolveCommandPeerFromPayload(payload));
-    for (const peer of loadTrustedClientPeers(this.cfg, this.cfg.DEVICE_ID)) {
-      pushPeer(peer);
-    }
-    return peers;
+    return peer ? [peer] : [];
   }
 
   encryptText(text: string, meta: any, peer?: { publicKey?: string; keyId?: string }) {
