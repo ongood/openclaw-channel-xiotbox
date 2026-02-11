@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.24}"
+TAG="${1:-1.0.25}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
 NEW_PLUGIN_ID="xiotbox"
@@ -154,6 +154,32 @@ plugins = data.get("plugins") or {}
 entries = plugins.get("entries") or {}
 installs = plugins.get("installs") or {}
 
+def replace_exact_old_id(value):
+    if isinstance(value, dict):
+        return {k: replace_exact_old_id(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [replace_exact_old_id(v) for v in value]
+    if isinstance(value, str) and value == old_id:
+        return new_id
+    return value
+
+def normalize_entry(raw):
+    # Keep user enable/disable preference but scrub stale old-id hints.
+    if isinstance(raw, dict):
+        cleaned = replace_exact_old_id(raw)
+        if "enabled" in raw:
+            cleaned["enabled"] = bool(raw.get("enabled"))
+        elif "disabled" in raw:
+            cleaned["enabled"] = not bool(raw.get("disabled"))
+            cleaned.pop("disabled", None)
+        else:
+            cleaned.setdefault("enabled", True)
+        return cleaned
+    if isinstance(raw, bool):
+        return {"enabled": raw}
+    # Fallback to a minimal valid entry; avoids carrying unknown stale hints.
+    return {"enabled": True}
+
 old_entry = entries.pop(old_id, None)
 backup_entry = None
 backup_install = None
@@ -172,9 +198,11 @@ if plugin_backup_path.exists():
 
 if new_id not in entries:
     if old_entry is not None:
-        entries[new_id] = old_entry
+        entries[new_id] = normalize_entry(old_entry)
     elif backup_entry is not None:
-        entries[new_id] = backup_entry
+        entries[new_id] = normalize_entry(backup_entry)
+else:
+    entries[new_id] = normalize_entry(entries.get(new_id))
 
 old_install = installs.pop(old_id, None)
 new_install = installs.get(new_id)
