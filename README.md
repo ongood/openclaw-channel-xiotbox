@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.20
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.24
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -29,16 +29,33 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.20
+bash scripts/update_openclaw_xiotbox.sh 1.0.24
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
-`OPENCLAW_EXT_DIR` 与 `OPENCLAW_CONFIG`。脚本默认保留 `channels.xiotbox` 配置。
-如需同时清理 `channels.xiotbox`，可设置 `OPENCLAW_WIPE_CHANNELS=1`。
+`OPENCLAW_EXT_DIR` 与 `OPENCLAW_CONFIG`。默认安装目录为 `~/.openclaw/extensions/xiotbox`。
 
-脚本会自动备份并临时移除 `channels.xiotbox`，安装完成后再回填并补齐基础字段：
+脚本会自动统一并迁移以下配置键（旧键会被删除）：
+`plugins.entries.xiotbox` / `plugins.installs.xiotbox` / `channels.xiotbox`。
+
+脚本会自动备份并临时移除渠道配置，安装完成后回填并补齐基础字段：
 `GATEWAY_WSS_URL` / `DEVICE_ID` / `DEVICE_TOKEN`。若缺失会自动打开编辑器（默认 `nano`）。
 如不希望自动打开编辑器，可设置 `OPENCLAW_AUTO_EDIT=0`。
+
+如需忽略旧渠道配置回填（全新配置），可设置 `OPENCLAW_WIPE_CHANNELS=1`。
+
+### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
+
+```bash
+bash scripts/update_openclaw_xiotbox.sh 1.0.24
+openclaw plugins list
+openclaw channels list
+```
+
+升级脚本会自动执行一次性迁移：
+- 旧目录 `~/.openclaw/extensions/openclaw-channel-xiotbox` -> 新目录 `~/.openclaw/extensions/xiotbox`
+- 旧键 `plugins.entries.openclaw-channel-xiotbox` / `plugins.installs.openclaw-channel-xiotbox` -> `*.xiotbox`
+- 若存在 `channels.openclaw-channel-xiotbox`，会与 `channels.xiotbox` 合并后统一写回 `channels.xiotbox`
 
 ## Mode 2: Bridge Mode (Recommended for stability/media)
 

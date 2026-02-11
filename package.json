@@ -1,6 +1,6 @@
 {
     "name": "openclaw-channel-xiotbox",
-    "version": "1.0.23",
+    "version": "1.0.24",
     "description": "OpenClaw plugin for XiotBox connectivity via WebSocket",
     "type": "module",
     "main": "dist/index.js",
@@ -46,7 +46,7 @@
         "installDependencies": true,
         "install": {
             "npmSpec": "openclaw-channel-xiotbox",
-            "localPath": "extensions/openclaw-channel-xiotbox",
+            "localPath": "extensions/xiotbox",
             "defaultChoice": "local"
         },
         "channel": {

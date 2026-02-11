@@ -75,7 +75,7 @@ class Executor {
 
             case '/version':
                 return {
-                    text: `openclaw-channel-xiotbox v${pkg.version}`,
+                    text: `xiotbox v${pkg.version}`,
                     json: {
                         version: pkg.version,
                         node: process.version,
