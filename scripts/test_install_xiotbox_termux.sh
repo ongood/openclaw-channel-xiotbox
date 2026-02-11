@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${1:-https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26}"
+REPO="${1:-https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27}"
 CFG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
 LOG_DIR="${OPENCLAW_TERMUX_LOG_DIR:-$HOME/.openclaw/logs}"
 

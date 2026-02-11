@@ -38,6 +38,9 @@ git branch --show-current
 
 - `package.json` 的 `version`
 - `scripts/update_openclaw_xiotbox.sh` 的默认 `TAG`
+- `scripts/install_configure_xiotbox.sh` 的默认 `TAG`
+- `scripts/test_install_xiotbox_termux.sh` 的默认 git tag
+- `scripts/bootstrap_xiotbox_termux.sh` 的默认 `TAG`
 - `README.md` 中安装/升级示例 tag
 
 ## 4. 构建产物

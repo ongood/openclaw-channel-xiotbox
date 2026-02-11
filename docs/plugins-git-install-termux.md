@@ -136,15 +136,15 @@ apt-get install -y make g++
 ## D.2 安装命令
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
 ```
 
 或使用维护脚本（含预检与配置归一化）：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.26
+bash scripts/update_openclaw_xiotbox.sh 1.0.27
 # 或
-bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
 ```
 
 推荐在 BotDrop 直接使用参数化脚本（安装 + 配置 + 启动）：
@@ -155,8 +155,35 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.26 \
+  1.0.27 \
   1
+```
+
+推荐直接使用一条命令跑完整闭环（安装 + 配置 + 启动 + 验证）：
+
+```bash
+bash scripts/bootstrap_xiotbox_termux.sh \
+  wss://socketd.odoo.games/ws/openclaw \
+  <DEVICE_ID> \
+  <DEVICE_TOKEN> \
+  https://api.xiotbox.com \
+  1.0.27 \
+  1 \
+  <MODEL_API_KEY> \
+  deepseek-chat
+```
+
+如果暂时不配置模型，传 `-` 即可：
+
+```bash
+bash scripts/bootstrap_xiotbox_termux.sh \
+  wss://socketd.odoo.games/ws/openclaw \
+  <DEVICE_ID> \
+  <DEVICE_TOKEN> \
+  https://api.xiotbox.com \
+  1.0.27 \
+  1 \
+  -
 ```
 
 参数说明：
@@ -208,8 +235,20 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
 ```
+
+## D.3.1 健康检查脚本（插件 + 模型 + gateway）
+
+```bash
+bash scripts/health_check_xiotbox.sh
+```
+
+可选参数（环境变量）：
+
+1. `CHECK_PLUGIN=0` 跳过插件检查
+2. `CHECK_MODEL=0` 跳过模型检查
+3. `CHECK_GATEWAY=0` 跳过 gateway 检查
 
 ## D.4 验证插件被识别
 

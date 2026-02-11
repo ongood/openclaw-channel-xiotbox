@@ -14,6 +14,8 @@
 - 运行时桥接：`src/runtime.ts`
 - 发布产物：`dist/`（插件安装实际使用）
 - 版本文件：`openclaw.plugin.json`、`package.json`
+- BotDrop 一键入口：`scripts/bootstrap_xiotbox_termux.sh`
+- 健康检查：`scripts/health_check_xiotbox.sh`
 
 ## 3. 当前关键约束
 
@@ -43,4 +45,3 @@
 1. OpenClaw 收到加密请求可成功解密
 2. 回包在 PC/iOS 都能被各自解密
 3. 不出现持续 `client_identity_changed` 或大面积 `[Encrypted payload]`
-

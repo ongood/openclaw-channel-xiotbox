@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INPUT="${1:-1.0.26}"
+INPUT="${1:-1.0.27}"
 if [[ "$INPUT" == http://* || "$INPUT" == https://* || "$INPUT" == git@* || "$INPUT" == ssh://* || "$INPUT" == file://* ]]; then
   TAG=""
   REPO="$INPUT"

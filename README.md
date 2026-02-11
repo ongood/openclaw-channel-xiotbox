@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -29,7 +29,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.26
+bash scripts/update_openclaw_xiotbox.sh 1.0.27
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -51,12 +51,14 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.26
 - 文档：`docs/plugins-git-install-termux.md`
 - 一键测试：`scripts/test_install_xiotbox_termux.sh`
 - 一键安装+配置+重启网关：`scripts/install_configure_xiotbox.sh`
+- 一键全流程（安装+配置+启动+验证）：`scripts/bootstrap_xiotbox_termux.sh`
+- 健康检查：`scripts/health_check_xiotbox.sh`
 
 示例：
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
 ```
 
 推荐（Android/BotDrop）直接使用一键安装配置脚本：
@@ -67,8 +69,35 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.26 \
+  1.0.27 \
   1
+```
+
+推荐（可复现闭环）直接使用单条命令：
+
+```bash
+bash scripts/bootstrap_xiotbox_termux.sh \
+  wss://socketd.odoo.games/ws/openclaw \
+  <DEVICE_ID> \
+  <DEVICE_TOKEN> \
+  https://api.xiotbox.com \
+  1.0.27 \
+  1 \
+  <MODEL_API_KEY> \
+  deepseek-chat
+```
+
+不配置模型（只验证 xiotbox + gateway）：
+
+```bash
+bash scripts/bootstrap_xiotbox_termux.sh \
+  wss://socketd.odoo.games/ws/openclaw \
+  <DEVICE_ID> \
+  <DEVICE_TOKEN> \
+  https://api.xiotbox.com \
+  1.0.27 \
+  1 \
+  -
 ```
 
 说明：
@@ -114,7 +143,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.26
+bash scripts/update_openclaw_xiotbox.sh 1.0.27
 openclaw plugins list
 openclaw channels list
 ```
