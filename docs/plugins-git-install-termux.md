@@ -147,6 +147,33 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.26
 bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
 ```
 
+推荐在 BotDrop 直接使用参数化脚本（安装 + 配置 + 启动）：
+
+```bash
+bash scripts/install_configure_xiotbox.sh \
+  wss://socketd.odoo.games/ws/openclaw \
+  <DEVICE_ID> \
+  <DEVICE_TOKEN> \
+  https://api.xiotbox.com \
+  1.0.26 \
+  1
+```
+
+参数说明：
+
+1. `GATEWAY_WSS_URL`
+2. `DEVICE_ID`
+3. `DEVICE_TOKEN`
+4. `API_BASE_URL`（传 `-` 表示保留旧值）
+5. `TAG_OR_REPO`
+6. `ALLOW_NEW_CLIENT_IDENTITIES`（建议稳定后改 `0`）
+
+脚本默认行为（适合 Android）：
+
+1. `OPENCLAW_AUTO_EDIT=0`
+2. `OPENCLAW_SKIP_DOCTOR=1`
+3. `OPENCLAW_RESTART_GATEWAY=1`
+
 ## D.3 一键测试脚本
 
 ```bash

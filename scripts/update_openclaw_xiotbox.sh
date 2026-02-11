@@ -19,6 +19,9 @@ CFG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
 BACKUP_PATH="${OPENCLAW_XIOTBOX_BACKUP:-$HOME/.openclaw/.xiotbox_channel_backup.json}"
 PLUGINS_BACKUP_PATH="${OPENCLAW_XIOTBOX_PLUGIN_BACKUP:-$HOME/.openclaw/.xiotbox_plugin_backup.json}"
 OPENCLAW_WIPE_CHANNELS="${OPENCLAW_WIPE_CHANNELS:-0}"
+OPENCLAW_SKIP_DOCTOR="${OPENCLAW_SKIP_DOCTOR:-auto}"
+OPENCLAW_RESTART_GATEWAY="${OPENCLAW_RESTART_GATEWAY:-auto}"
+OPENCLAW_GATEWAY_LOG="${OPENCLAW_GATEWAY_LOG:-$HOME/.openclaw/gateway.log}"
 
 is_termux=0
 if [ -n "${TERMUX_VERSION:-}" ] || [[ "${PREFIX:-}" == *"/com.termux/"* ]]; then
@@ -28,6 +31,11 @@ fi
 is_proot=0
 if [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_DISTRO:-}" ] || [ -n "${PROOT_ROOTFS:-}" ]; then
   is_proot=1
+fi
+
+is_android=0
+if [ -n "${ANDROID_ROOT:-}" ] || [[ "${HOME:-}" == /data/data/*/files/home* ]]; then
+  is_android=1
 fi
 
 info() {
@@ -41,6 +49,12 @@ warn() {
 fail() {
   printf '[xiotbox-install][ERROR] %s\n' "$*" >&2
   exit 1
+}
+
+is_truthy() {
+  local v
+  v="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  [ "$v" = "1" ] || [ "$v" = "true" ] || [ "$v" = "yes" ] || [ "$v" = "on" ]
 }
 
 need_cmd() {
@@ -75,6 +89,9 @@ preflight() {
   fi
   if [ "$is_proot" -eq 1 ]; then
     info "Detected proot environment."
+  fi
+  if [ "$is_android" -eq 1 ]; then
+    info "Detected Android userspace."
   fi
 
   need_cmd python3 || fail "python3 not found. This script requires python3."
@@ -322,9 +339,23 @@ print("normalized plugins entries/installs", cfg_path)
 PY
 fi
 
-openclaw doctor --fix || true
+should_skip_doctor=0
+if [ "${OPENCLAW_SKIP_DOCTOR:-auto}" = "auto" ]; then
+  if [ "$is_android" -eq 1 ]; then
+    should_skip_doctor=1
+  fi
+elif is_truthy "${OPENCLAW_SKIP_DOCTOR:-}"; then
+  should_skip_doctor=1
+fi
+
+if [ "$should_skip_doctor" -eq 1 ]; then
+  info "Skipping 'openclaw doctor --fix' on this environment."
+else
+  openclaw doctor --fix || true
+fi
+
 if [ "$install_rc" -ne 0 ]; then
-  echo "openclaw plugins install exited with code $install_rc; config normalized."
+  warn "openclaw plugins install exited with code $install_rc; config normalized."
 fi
 
 if [ -f "$CFG_PATH" ]; then
@@ -432,6 +463,32 @@ PY
       echo "edit config: $CFG_PATH"
     fi
   fi
+fi
+
+should_restart_gateway=0
+if [ "${OPENCLAW_RESTART_GATEWAY:-auto}" = "auto" ]; then
+  if [ "$is_android" -eq 1 ]; then
+    should_restart_gateway=1
+  fi
+elif is_truthy "${OPENCLAW_RESTART_GATEWAY:-}"; then
+  should_restart_gateway=1
+fi
+
+if [ "$should_restart_gateway" -eq 1 ] && [ "$install_rc" -eq 0 ]; then
+  info "Restarting OpenClaw gateway."
+  mkdir -p "$(dirname "$OPENCLAW_GATEWAY_LOG")" || true
+  pkill -f "openclaw.*gateway" >/dev/null 2>&1 || true
+  if openclaw gateway run --force >>"$OPENCLAW_GATEWAY_LOG" 2>&1 & then
+    info "Gateway started. log=$OPENCLAW_GATEWAY_LOG"
+  else
+    warn "Failed to start gateway with 'openclaw gateway run --force'."
+  fi
+elif [ "$should_restart_gateway" -eq 1 ]; then
+  warn "Skipping gateway restart because plugin install failed."
+fi
+
+if [ "$install_rc" -ne 0 ]; then
+  exit "$install_rc"
 fi
 
 echo "done"

@@ -50,6 +50,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.26
 
 - 文档：`docs/plugins-git-install-termux.md`
 - 一键测试：`scripts/test_install_xiotbox_termux.sh`
+- 一键安装+配置+重启网关：`scripts/install_configure_xiotbox.sh`
 
 示例：
 
@@ -57,6 +58,23 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.26
 bash scripts/test_install_xiotbox_termux.sh \
   https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
 ```
+
+推荐（Android/BotDrop）直接使用一键安装配置脚本：
+
+```bash
+bash scripts/install_configure_xiotbox.sh \
+  wss://socketd.odoo.games/ws/openclaw \
+  <DEVICE_ID> \
+  <DEVICE_TOKEN> \
+  https://api.xiotbox.com \
+  1.0.26 \
+  1
+```
+
+说明：
+- 该脚本会调用 `update_openclaw_xiotbox.sh` 完成重装与配置归一化。
+- Android 默认跳过 `openclaw doctor --fix`，避免 `Gateway service install not supported on android` 干扰。
+- Android 默认自动重启 gateway（可通过环境变量 `OPENCLAW_RESTART_GATEWAY=0` 关闭）。
 
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
