@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.25
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -29,7 +29,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.25
+bash scripts/update_openclaw_xiotbox.sh 1.0.26
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -47,7 +47,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.25
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.25
+bash scripts/update_openclaw_xiotbox.sh 1.0.26
 openclaw plugins list
 openclaw channels list
 ```

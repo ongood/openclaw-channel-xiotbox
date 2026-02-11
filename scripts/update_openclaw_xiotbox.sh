@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.25}"
+TAG="${1:-1.0.26}"
 REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 
 NEW_PLUGIN_ID="xiotbox"
@@ -164,17 +164,17 @@ def replace_exact_old_id(value):
     return value
 
 def normalize_entry(raw):
-    # Keep user enable/disable preference but scrub stale old-id hints.
+    # Canonicalize to minimal safe shape and keep only enabled flag.
+    # This avoids carrying stale entry hint/id fields that trigger mismatch warnings.
     if isinstance(raw, dict):
         cleaned = replace_exact_old_id(raw)
-        if "enabled" in raw:
-            cleaned["enabled"] = bool(raw.get("enabled"))
-        elif "disabled" in raw:
-            cleaned["enabled"] = not bool(raw.get("disabled"))
-            cleaned.pop("disabled", None)
+        if "enabled" in cleaned:
+            enabled = bool(cleaned.get("enabled"))
+        elif "disabled" in cleaned:
+            enabled = not bool(cleaned.get("disabled"))
         else:
-            cleaned.setdefault("enabled", True)
-        return cleaned
+            enabled = True
+        return {"enabled": enabled}
     if isinstance(raw, bool):
         return {"enabled": raw}
     # Fallback to a minimal valid entry; avoids carrying unknown stale hints.
