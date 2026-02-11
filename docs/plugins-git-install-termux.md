@@ -177,16 +177,31 @@ bash scripts/install_configure_xiotbox.sh \
 ## D.2.1 DeepSeek 配置（不走 UI，防止覆盖手工配置）
 
 ```bash
-bash scripts/configure_deepseek_termux.sh <DEEPSEEK_API_KEY> deepseek-chat
+bash scripts/configure_deepseek_termux.sh <API_KEY> deepseek-chat
 ```
 
 默认会清理 BotDrop 模板缓存文件：
 `/data/data/app.botdrop/shared_prefs/botdrop_config_template.xml`
 
+默认也会把 `models.providers.deepseek` 写成 OpenAI 兼容配置：
+1. `baseUrl=https://api.deepseek.com/v1`
+2. `api=openai-completions`
+3. 自动补一条 `deepseek-chat` 到 provider models
+
+脚本默认会先校验模型是否存在于当前 `openclaw models list`。
+如果不存在会直接报错并提示可用 deepseek-like 模型，避免运行时 `Unknown model`。
+但 `deepseek/*` 默认走 provider 写入模式，不依赖预置模型列表。
+
+如果你要使用完整模型名（例如 OpenRouter 路径）：
+
+```bash
+bash scripts/configure_deepseek_termux.sh <OPENROUTER_API_KEY> openrouter/deepseek/deepseek-chat
+```
+
 如果你要保留缓存：
 
 ```bash
-CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <DEEPSEEK_API_KEY> deepseek-chat
+CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> deepseek-chat
 ```
 
 ## D.3 一键测试脚本

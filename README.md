@@ -81,19 +81,34 @@ bash scripts/install_configure_xiotbox.sh \
 如果 BotDrop Setup/Dashboard UI 会覆盖你手工改的 `~/.openclaw/openclaw.json`，直接使用：
 
 ```bash
-bash scripts/configure_deepseek_termux.sh <DEEPSEEK_API_KEY> deepseek-chat
+bash scripts/configure_deepseek_termux.sh <API_KEY> deepseek-chat
 ```
 
 该脚本会：
 1. 写入 `~/.openclaw/openclaw.json` 的 `agents.defaults.model.primary=deepseek/<model>`
 2. 写入 `~/.openclaw/agents/main/agent/auth-profiles.json`
-3. 默认删除 BotDrop 模板缓存（避免再次自动覆盖）
-4. 默认重启 `openclaw gateway`
+3. 默认写入 `models.providers.deepseek`（`api=openai-completions` + `baseUrl=https://api.deepseek.com/v1`）
+4. 默认删除 BotDrop 模板缓存（避免再次自动覆盖）
+5. 默认重启 `openclaw gateway`
+6. 对非 `deepseek/*` 模型，默认先校验模型是否存在于当前 `openclaw models list`，避免运行时 `Unknown model`
+
+如果你的 OpenClaw 没有 `deepseek/deepseek-chat`，可以传完整模型名（示例）：
+
+```bash
+bash scripts/configure_deepseek_termux.sh <OPENROUTER_API_KEY> openrouter/deepseek/deepseek-chat
+```
+
+如果你想把任意 provider 当作 OpenAI 兼容端点强制写入（高级）：
+
+```bash
+WRITE_PROVIDER_CONFIG=1 OPENAI_COMPAT_BASE_URL='https://api.deepseek.com/v1' \
+bash scripts/configure_deepseek_termux.sh <API_KEY> myproxy/deepseek-chat
+```
 
 如需保留模板缓存：
 
 ```bash
-CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <DEEPSEEK_API_KEY> deepseek-chat
+CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> deepseek-chat
 ```
 
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
