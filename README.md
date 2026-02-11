@@ -76,6 +76,26 @@ bash scripts/install_configure_xiotbox.sh \
 - Android 默认跳过 `openclaw doctor --fix`，避免 `Gateway service install not supported on android` 干扰。
 - Android 默认自动重启 gateway（可通过环境变量 `OPENCLAW_RESTART_GATEWAY=0` 关闭）。
 
+### BotDrop 下仅命令行配置 DeepSeek（绕开 UI 覆盖问题）
+
+如果 BotDrop Setup/Dashboard UI 会覆盖你手工改的 `~/.openclaw/openclaw.json`，直接使用：
+
+```bash
+bash scripts/configure_deepseek_termux.sh <DEEPSEEK_API_KEY> deepseek-chat
+```
+
+该脚本会：
+1. 写入 `~/.openclaw/openclaw.json` 的 `agents.defaults.model.primary=deepseek/<model>`
+2. 写入 `~/.openclaw/agents/main/agent/auth-profiles.json`
+3. 默认删除 BotDrop 模板缓存（避免再次自动覆盖）
+4. 默认重启 `openclaw gateway`
+
+如需保留模板缓存：
+
+```bash
+CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <DEEPSEEK_API_KEY> deepseek-chat
+```
+
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash

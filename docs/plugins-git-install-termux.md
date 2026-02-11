@@ -174,6 +174,21 @@ bash scripts/install_configure_xiotbox.sh \
 2. `OPENCLAW_SKIP_DOCTOR=1`
 3. `OPENCLAW_RESTART_GATEWAY=1`
 
+## D.2.1 DeepSeek 配置（不走 UI，防止覆盖手工配置）
+
+```bash
+bash scripts/configure_deepseek_termux.sh <DEEPSEEK_API_KEY> deepseek-chat
+```
+
+默认会清理 BotDrop 模板缓存文件：
+`/data/data/app.botdrop/shared_prefs/botdrop_config_template.xml`
+
+如果你要保留缓存：
+
+```bash
+CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <DEEPSEEK_API_KEY> deepseek-chat
+```
+
 ## D.3 一键测试脚本
 
 ```bash
