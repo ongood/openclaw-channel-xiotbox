@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAG="${1:-1.0.26}"
-REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
+INPUT="${1:-1.0.26}"
+if [[ "$INPUT" == http://* || "$INPUT" == https://* || "$INPUT" == git@* || "$INPUT" == ssh://* || "$INPUT" == file://* ]]; then
+  TAG=""
+  REPO="$INPUT"
+else
+  TAG="$INPUT"
+  REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
+fi
 
 NEW_PLUGIN_ID="xiotbox"
 OLD_PLUGIN_ID="openclaw-channel-xiotbox"
@@ -13,6 +19,91 @@ CFG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
 BACKUP_PATH="${OPENCLAW_XIOTBOX_BACKUP:-$HOME/.openclaw/.xiotbox_channel_backup.json}"
 PLUGINS_BACKUP_PATH="${OPENCLAW_XIOTBOX_PLUGIN_BACKUP:-$HOME/.openclaw/.xiotbox_plugin_backup.json}"
 OPENCLAW_WIPE_CHANNELS="${OPENCLAW_WIPE_CHANNELS:-0}"
+
+is_termux=0
+if [ -n "${TERMUX_VERSION:-}" ] || [[ "${PREFIX:-}" == *"/com.termux/"* ]]; then
+  is_termux=1
+fi
+
+is_proot=0
+if [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_DISTRO:-}" ] || [ -n "${PROOT_ROOTFS:-}" ]; then
+  is_proot=1
+fi
+
+info() {
+  printf '[xiotbox-install] %s\n' "$*"
+}
+
+warn() {
+  printf '[xiotbox-install][WARN] %s\n' "$*" >&2
+}
+
+fail() {
+  printf '[xiotbox-install][ERROR] %s\n' "$*" >&2
+  exit 1
+}
+
+need_cmd() {
+  local cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+show_termux_hints() {
+  cat >&2 <<'MSG'
+Termux/proot dependency hints:
+  pkg update
+  pkg install -y git nodejs-lts python ca-certificates openssl
+
+If you are inside proot-distro (Debian/Ubuntu rootfs), install there:
+  apt-get update
+  apt-get install -y git nodejs npm python3 ca-certificates
+
+Only if a plugin has native addons (node-gyp), add toolchain:
+  pkg install -y clang make
+  # or inside proot:
+  apt-get install -y make g++
+MSG
+}
+
+preflight() {
+  info "repo=$REPO"
+  if [ "$is_termux" -eq 1 ]; then
+    info "Detected Termux environment."
+  fi
+  if [ "$is_proot" -eq 1 ]; then
+    info "Detected proot environment."
+  fi
+
+  need_cmd python3 || fail "python3 not found. This script requires python3."
+  need_cmd openclaw || fail "openclaw command not found in PATH."
+  need_cmd git || {
+    if [ "$is_termux" -eq 1 ] || [ "$is_proot" -eq 1 ]; then
+      show_termux_hints
+    fi
+    fail "git not found. openclaw plugins install <git-repo> needs git."
+  }
+  need_cmd node || {
+    if [ "$is_termux" -eq 1 ] || [ "$is_proot" -eq 1 ]; then
+      show_termux_hints
+    fi
+    fail "node not found."
+  }
+  need_cmd npm || {
+    if [ "$is_termux" -eq 1 ] || [ "$is_proot" -eq 1 ]; then
+      show_termux_hints
+    fi
+    fail "npm not found."
+  }
+
+  mkdir -p "$(dirname "$EXT_DIR")" "$(dirname "$CFG_PATH")" || fail "Cannot create plugin/config parent directories."
+  [ -w "$(dirname "$EXT_DIR")" ] || fail "Plugin directory parent is not writable: $(dirname "$EXT_DIR")"
+  [ -w "$(dirname "$CFG_PATH")" ] || fail "Config directory parent is not writable: $(dirname "$CFG_PATH")"
+}
+
+preflight
 
 if [ -f "$CFG_PATH" ]; then
   export CFG_PATH

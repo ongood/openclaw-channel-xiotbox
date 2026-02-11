@@ -44,6 +44,20 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.26
 
 如需忽略旧渠道配置回填（全新配置），可设置 `OPENCLAW_WIPE_CHANNELS=1`。
 
+### BotDrop / Termux / proot 兼容安装
+
+已提供专项文档与自动化脚本：
+
+- 文档：`docs/plugins-git-install-termux.md`
+- 一键测试：`scripts/test_install_xiotbox_termux.sh`
+
+示例：
+
+```bash
+bash scripts/test_install_xiotbox_termux.sh \
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+```
+
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash

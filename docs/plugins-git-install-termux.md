@@ -1,0 +1,196 @@
+# XiotBox 插件 Git 安装在 BotDrop(Termux/proot) 的兼容性审查与落地
+
+## 0. 审查边界（代码事实）
+
+本次可直接审查的代码仓库是：`openclaw-channel-xiotbox`。
+
+已确认事实：
+
+1. 当前工作区中**没有** OpenClaw CLI 源码仓库。
+2. 本机当前环境中 `openclaw` 命令不存在（无法本机反编译/反查 CLI 内部实现）。
+3. 因此，`openclaw plugins install` 的内部实现链路（CLI parser/install handler）无法在本仓库内做源码级定位。
+
+本文件将给出：
+
+1. 在本仓库内可核实的插件识别与安装相关事实。
+2. Termux/proot 下可执行的兼容补齐与验证脚本。
+3. 需要在 OpenClaw CLI 主仓继续审查的清单。
+
+## A. Git 安装链路（当前仓库可核实部分）
+
+### A.1 插件元数据与识别入口
+
+代码位置：`package.json`
+
+- `main`: `dist/index.js`
+- `openclaw.extensions`: `./dist/index.js`
+- `openclaw.channels`: `xiotbox`
+- `openclaw.installDependencies`: `true`
+- `openclaw.install.localPath`: `extensions/xiotbox`
+
+代码位置：`openclaw.plugin.json`
+
+- 插件 `id`: `xiotbox`
+- `channels`: `xiotbox`
+- `configSchema` 已声明
+
+代码位置：`index.ts`
+
+- 默认导出 `plugin`
+- `register(api)` 内调用 `api.registerChannel({ plugin: xiotboxPlugin })`
+
+结论：从插件仓库自身看，具备被 OpenClaw 插件系统识别/注册所需的基本入口与元数据。
+
+### A.2 Git 安装触发点（可核实）
+
+代码位置：`scripts/update_openclaw_xiotbox.sh`
+
+- 直接调用：`openclaw plugins install "$REPO"`
+- 维护路径：默认 `~/.openclaw/extensions/xiotbox`
+- 维护配置：默认 `~/.openclaw/openclaw.json`
+
+## B. Termux/proot 兼容性逐项审查
+
+### B.1 Git 相关
+
+- 审查结果：原脚本未做 `git` 存在性预检。
+- 风险：Termux/proot 常见缺少 git，安装失败信息不友好。
+- 处理：已在脚本增加依赖预检与 Termux/apt 安装提示。
+
+### B.2 路径与权限
+
+- 审查结果：默认写 `~/.openclaw`，未提前检查可写性。
+- 风险：proot 分层目录或权限异常会导致安装后落盘失败。
+- 处理：已增加目录创建与可写性校验（插件目录父级、配置目录父级）。
+
+### B.3 Node 生态编译依赖
+
+- 审查结果：本插件依赖为 `@noble/curves`、`ws`、`dotenv`，未发现 `node-gyp` 原生 addon 依赖。
+- 风险：低；仍需 Node/npm 存在。
+- 处理：已在脚本预检 `node`、`npm`。
+
+### B.4 平台判断/拦截
+
+- 审查结果：未在 `package.json` 看到 `os/cpu` 限制字段。
+- 审查结果：未发现阻断 `android` 平台的安装脚本。
+- 风险：低。
+
+### B.5 插件可识别性
+
+- 审查结果：`main + openclaw.extensions + default export register()` 完整。
+- 风险：若 CLI 扫描规则变化，需在 OpenClaw 主仓校验。
+- 处理：新增验证脚本通过 `openclaw plugins list/channels list` 和配置回退校验。
+
+## C. 已实施的最小修复
+
+### C.1 更新脚本增强
+
+文件：`scripts/update_openclaw_xiotbox.sh`
+
+新增：
+
+1. 支持直接传 `<git-repo>` 或 `tag` 两种参数。
+2. Termux/proot 环境识别（`TERMUX_VERSION/PREFIX/PROOT_*`）。
+3. 依赖预检：`openclaw/git/node/npm/python3`。
+4. 目录可写性预检：`~/.openclaw/extensions`、`~/.openclaw`。
+5. 失败时给出 Termux 与 proot 的安装命令提示。
+
+### C.2 新增自动化验证脚本
+
+文件：`scripts/test_install_xiotbox_termux.sh`
+
+流程：
+
+1. 预检依赖
+2. 执行 `openclaw plugins install <repo>`
+3. 校验 `openclaw plugins list`
+4. 校验 `openclaw channels list`
+5. 若 list 不可用，回退检查 `~/.openclaw/openclaw.json` 的插件注册键
+
+## D. BotDrop 可复制验收步骤
+
+## D.1 前置依赖（Termux）
+
+```bash
+pkg update
+pkg install -y git nodejs-lts python ca-certificates openssl
+```
+
+若在 `proot-distro` 的 Debian/Ubuntu rootfs：
+
+```bash
+apt-get update
+apt-get install -y git nodejs npm python3 ca-certificates
+```
+
+仅当某个插件依赖原生编译（`node-gyp`）时，再补安装工具链：
+
+```bash
+# Termux
+pkg install -y clang make
+
+# Debian/Ubuntu proot rootfs
+apt-get install -y make g++
+```
+
+## D.2 安装命令
+
+```bash
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+```
+
+或使用维护脚本（含预检与配置归一化）：
+
+```bash
+bash scripts/update_openclaw_xiotbox.sh 1.0.26
+# 或
+bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+```
+
+## D.3 一键测试脚本
+
+```bash
+bash scripts/test_install_xiotbox_termux.sh \
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.26
+```
+
+## D.4 验证插件被识别
+
+```bash
+openclaw plugins list
+openclaw channels list
+```
+
+若 CLI list 命令异常，检查配置回退：
+
+```bash
+python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path('~/.openclaw/openclaw.json').expanduser()
+d = json.loads(p.read_text('utf-8'))
+print('plugins.entries.xiotbox:', 'xiotbox' in ((d.get('plugins') or {}).get('entries') or {}))
+print('plugins.installs.xiotbox:', 'xiotbox' in ((d.get('plugins') or {}).get('installs') or {}))
+print('channels.xiotbox:', 'xiotbox' in (d.get('channels') or {}))
+PY
+```
+
+## D.5 启动后日志确认（示例）
+
+> 具体启动命令依 OpenClaw CLI 版本而定。
+
+```bash
+openclaw start 2>&1 | tee /tmp/openclaw_start.log
+grep -En "xiotbox|XiotBox|registerChannel|channel" /tmp/openclaw_start.log
+```
+
+若没有 `openclaw start` 子命令，请替换为你当前版本的启动命令并保留同样的 grep 检查。
+
+## E. 仍需在 OpenClaw CLI 主仓完成的审查点
+
+由于本仓库不含 CLI 源码，以下项待在 OpenClaw 主仓继续核实：
+
+1. `openclaw plugins install` 的 parser/handler 入口文件与函数。
+2. clone 实现细节（git 子进程参数、checkout、错误码映射）。
+3. 插件目录选择算法与 workspace 根目录判定。
+4. 依赖安装器选择（npm/pnpm/yarn）和 Termux 下 fallback。
+5. 插件扫描 registry 的最终规则（manifest/package.json 优先级）。
