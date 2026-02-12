@@ -129,7 +129,7 @@ export function buildEnvelope(
 
   const { priv: epkPriv, pub: epkPub } = x25519Keypair();
   const shared = x25519SharedSecret(epkPriv, receiverPubkey);
-  const wrapKey = crypto.hkdfSync('sha256', shared, Buffer.alloc(0), HKDF_INFO, 32);
+  const wrapKey = Buffer.from(crypto.hkdfSync('sha256', shared, Buffer.alloc(0), HKDF_INFO, 32));
   const wrapNonce = crypto.randomBytes(WRAP_NONCE_LEN);
   const wrappedKey = aesGcmEncrypt(wrapKey, wrapNonce, contentKey, null);
 
@@ -165,7 +165,7 @@ export function decryptEnvelope(
   const wrapNonce = ekBlob.slice(PUBKEY_LEN, PUBKEY_LEN + WRAP_NONCE_LEN);
   const wrapped = ekBlob.slice(PUBKEY_LEN + WRAP_NONCE_LEN);
   const shared = x25519SharedSecret(privRaw, epk);
-  const wrapKey = crypto.hkdfSync('sha256', shared, Buffer.alloc(0), HKDF_INFO, 32);
+  const wrapKey = Buffer.from(crypto.hkdfSync('sha256', shared, Buffer.alloc(0), HKDF_INFO, 32));
   const contentKey = aesGcmDecrypt(wrapKey, wrapNonce, wrapped, null);
 
   const nonce = b64d(envelope.nonce_b64 || '');

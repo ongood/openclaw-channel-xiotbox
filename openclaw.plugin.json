@@ -7,6 +7,12 @@
         "type": "object",
         "additionalProperties": true,
         "properties": {
+            "enabled": {
+                "type": "boolean"
+            },
+            "name": {
+                "type": "string"
+            },
             "GATEWAY_WSS_URL": {
                 "type": "string"
             },
@@ -62,6 +68,86 @@
                     "boolean",
                     "number"
                 ]
+            },
+            "LOCAL_CONTROL_BASE_URL": {
+                "type": "string"
+            },
+            "LOCAL_CONTROL_TOKEN": {
+                "type": "string"
+            },
+            "LOCAL_CONTROL_TIMEOUT_MS": {
+                "type": "number"
+            },
+            "accounts": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "name": {
+                            "type": "string"
+                        },
+                        "GATEWAY_WSS_URL": {
+                            "type": "string"
+                        },
+                        "DEVICE_ID": {
+                            "type": "string"
+                        },
+                        "DEVICE_TOKEN": {
+                            "type": "string"
+                        },
+                        "USE_QUERY_AUTH": {
+                            "type": "boolean"
+                        },
+                        "OUTBOX_MAX": {
+                            "type": "number"
+                        },
+                        "OUTBOX_TTL_MS": {
+                            "type": "number"
+                        },
+                        "COMMAND_CACHE_TTL_MS": {
+                            "type": "number"
+                        },
+                        "COMMAND_CACHE_MAX": {
+                            "type": "number"
+                        },
+                        "STREAMING": {
+                            "type": "boolean"
+                        },
+                        "STREAM_THROTTLE_MS": {
+                            "type": "number"
+                        },
+                        "API_BASE_URL": {
+                            "type": "string"
+                        },
+                        "E2E_KEY_PATH": {
+                            "type": "string"
+                        },
+                        "E2E_ROTATE": {
+                            "type": [
+                                "string",
+                                "boolean",
+                                "number"
+                            ]
+                        },
+                        "IDENTITY_KEY_PATH": {
+                            "type": "string"
+                        },
+                        "TRUST_PATH": {
+                            "type": "string"
+                        },
+                        "ALLOW_NEW_CLIENT_IDENTITIES": {
+                            "type": [
+                                "string",
+                                "boolean",
+                                "number"
+                            ]
+                        }
+                    }
+                }
             }
         }
     }

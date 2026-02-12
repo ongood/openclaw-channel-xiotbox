@@ -136,15 +136,15 @@ apt-get install -y make g++
 ## D.2 安装命令
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
 ```
 
 或使用维护脚本（含预检与配置归一化）：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.27
+bash scripts/update_openclaw_xiotbox.sh 1.0.31
 # 或
-bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
+bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
 ```
 
 推荐在 BotDrop 直接使用参数化脚本（安装 + 配置 + 启动）：
@@ -155,7 +155,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.27 \
+  1.0.31 \
   1
 ```
 
@@ -167,7 +167,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.27 \
+  1.0.31 \
   1 \
   <MODEL_API_KEY> \
   deepseek-chat
@@ -181,7 +181,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.27 \
+  1.0.31 \
   1 \
   -
 ```
@@ -235,7 +235,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
 ```
 
 ## D.3.1 健康检查脚本（插件 + 模型 + gateway）
@@ -280,6 +280,83 @@ grep -En "xiotbox|XiotBox|registerChannel|channel" /tmp/openclaw_start.log
 ```
 
 若没有 `openclaw start` 子命令，请替换为你当前版本的启动命令并保留同样的 grep 检查。
+
+## D.6 OpenClaw 调 XiotBox 本地控制（可选）
+
+`xiotbox` 插件已提供 optional tool：`xiotbox_local_control`。
+
+先在 `~/.openclaw/openclaw.json` 写入：
+
+```json
+{
+  "channels": {
+    "xiotbox": {
+      "LOCAL_CONTROL_BASE_URL": "http://127.0.0.1:17777",
+      "LOCAL_CONTROL_TOKEN": "YOUR_LOCAL_CONTROL_TOKEN"
+    }
+  }
+}
+```
+
+再把工具加入 agent allowlist（示例）：
+
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": [
+            "xiotbox_local_control"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+可用动作：
+1. `open_app`
+2. `tap`
+3. `type`
+4. `open_accessibility_settings`
+
+快速验证（OpenClaw 侧）：
+
+```bash
+openclaw message \
+  --text "调用 xiotbox_local_control: action=open_app, package=com.tencent.mm"
+```
+
+## D.7 双账户配置（远程 + 本地）
+
+支持 `channels.xiotbox.accounts.<accountId>`：
+
+```json
+{
+  "channels": {
+    "xiotbox": {
+      "enabled": true,
+      "accounts": {
+        "remote": {
+          "enabled": true,
+          "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
+          "DEVICE_ID": "REMOTE_DEVICE_ID",
+          "DEVICE_TOKEN": "REMOTE_DEVICE_TOKEN"
+        },
+        "local": {
+          "enabled": true,
+          "GATEWAY_WSS_URL": "ws://127.0.0.1:9002/ws/openclaw",
+          "DEVICE_ID": "LOCAL_DEVICE_ID",
+          "DEVICE_TOKEN": "LOCAL_DEVICE_TOKEN"
+        }
+      }
+    }
+  }
+}
+```
 
 ## E. 仍需在 OpenClaw CLI 主仓完成的审查点
 

@@ -6,9 +6,43 @@ const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;
 const DEFAULT_STREAM_THROTTLE_MS = 500;
 const DEFAULT_ACCOUNT_ID = 'default';
+const CHANNEL_ID = 'xiotbox';
 
-function buildConfig(cfg: any) {
-  const channelCfg = cfg?.channels?.xiotbox || {};
+function normalizeAccountId(value?: string | null): string {
+  const normalized = String(value || '').trim();
+  return normalized || DEFAULT_ACCOUNT_ID;
+}
+
+function getChannelConfig(cfg: any) {
+  return cfg?.channels?.[CHANNEL_ID] || {};
+}
+
+function getAccountsConfig(cfg: any): Record<string, any> {
+  const root = getChannelConfig(cfg);
+  const accounts = root?.accounts;
+  if (accounts && typeof accounts === 'object' && !Array.isArray(accounts)) {
+    return accounts;
+  }
+  return {};
+}
+
+function resolveAccountConfig(cfg: any, accountId?: string) {
+  const root = getChannelConfig(cfg);
+  const { accounts: _accounts, ...base } = root || {};
+  const id = normalizeAccountId(accountId);
+  const accounts = getAccountsConfig(cfg);
+  const direct = accounts[id];
+  if (direct && typeof direct === 'object') {
+    return { ...base, ...direct };
+  }
+  const matchedKey = Object.keys(accounts).find((key) => normalizeAccountId(key) === id);
+  if (matchedKey) {
+    return { ...base, ...(accounts[matchedKey] || {}) };
+  }
+  return base;
+}
+
+function buildConfig(channelCfg: any) {
   return {
     GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || process.env.XIOTBOX_GATEWAY_WSS || 'ws://localhost:9002/ws/openclaw',
     DEVICE_ID: channelCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID,
@@ -27,6 +61,7 @@ function buildConfig(cfg: any) {
     TRUST_PATH: channelCfg.TRUST_PATH || process.env.XIOTBOX_TRUST_PATH,
     ALLOW_NEW_CLIENT_IDENTITIES:
       channelCfg.ALLOW_NEW_CLIENT_IDENTITIES ?? process.env.XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES,
+    HELLO_EXTRA: undefined as any,
   };
 }
 
@@ -44,25 +79,56 @@ function shouldSkipReply(text: string): boolean {
 }
 
 function isConfiguredCfg(cfg: any): boolean {
-  const channelCfg = cfg?.channels?.xiotbox || {};
-  const deviceId = channelCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID;
-  const deviceToken = channelCfg.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN;
-  return Boolean(deviceId && deviceToken);
+  return listAccountIds(cfg).length > 0;
+}
+
+function listAccountIds(cfg: any): string[] {
+  const ids = new Set<string>();
+  const accounts = getAccountsConfig(cfg);
+  for (const key of Object.keys(accounts)) {
+    const id = normalizeAccountId(key);
+    const accountCfg = resolveAccountConfig(cfg, id);
+    const deviceId = accountCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID;
+    const deviceToken = accountCfg.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN;
+    if (deviceId && deviceToken) {
+      ids.add(id);
+    }
+  }
+
+  // Backward compatibility: single-account root-level config.
+  const root = getChannelConfig(cfg);
+  const rootDeviceId = root.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID;
+  const rootDeviceToken = root.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN;
+  if (rootDeviceId && rootDeviceToken) {
+    ids.add(DEFAULT_ACCOUNT_ID);
+  }
+
+  return [...ids].sort((a, b) => a.localeCompare(b));
+}
+
+function resolveDefaultAccountId(cfg: any): string {
+  const ids = listAccountIds(cfg);
+  if (ids.includes(DEFAULT_ACCOUNT_ID)) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return ids[0] || DEFAULT_ACCOUNT_ID;
 }
 
 function resolveAccount(cfg: any, accountId?: string) {
-  const channelCfg = cfg?.channels?.xiotbox || {};
+  const root = getChannelConfig(cfg);
+  const resolvedAccountId = normalizeAccountId(accountId);
+  const channelCfg = resolveAccountConfig(cfg, resolvedAccountId);
   return {
-    accountId: accountId || DEFAULT_ACCOUNT_ID,
+    accountId: resolvedAccountId,
     config: channelCfg,
-    enabled: channelCfg.enabled !== false,
+    enabled: root.enabled !== false && channelCfg.enabled !== false,
   };
 }
 
 export const xiotboxPlugin = {
-  id: 'xiotbox',
+  id: CHANNEL_ID,
   meta: {
-    id: 'xiotbox',
+    id: CHANNEL_ID,
     label: 'XiotBox',
     selectionLabel: 'XiotBox Gateway',
     blurb: 'Connects XiotBox devices and dispatches messages to OpenClaw runtime.',
@@ -77,11 +143,11 @@ export const xiotboxPlugin = {
     blockStreaming: false,
     outbound: false,
   },
-  reload: { configPrefixes: ['channels.xiotbox'] },
+  reload: { configPrefixes: ['channels.xiotbox', 'channels.xiotbox.accounts'] },
   config: {
-    listAccountIds: (cfg: any): string[] => (isConfiguredCfg(cfg) ? [DEFAULT_ACCOUNT_ID] : []),
+    listAccountIds: (cfg: any): string[] => listAccountIds(cfg),
     resolveAccount: (cfg: any, accountId?: string) => resolveAccount(cfg, accountId),
-    defaultAccountId: () => DEFAULT_ACCOUNT_ID,
+    defaultAccountId: (cfg: any) => resolveDefaultAccountId(cfg),
     isConfigured: (account: any) =>
       Boolean(
         (account?.config?.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID) &&
@@ -100,11 +166,13 @@ export const xiotboxPlugin = {
   gateway: {
     startAccount: async (ctx: any) => {
       const { cfg, log } = ctx;
-      const finalCfg = buildConfig(cfg);
+      const account = ctx.account || resolveAccount(cfg, ctx.accountId);
+      const accountId = normalizeAccountId(account.accountId);
+      const finalCfg = buildConfig(account.config || {});
 
       if (!finalCfg.DEVICE_ID || !finalCfg.DEVICE_TOKEN) {
-        const err = 'Missing XiotBox configuration (DEVICE_ID or DEVICE_TOKEN).';
-        log?.error?.(`[XiotBox] ${err}`);
+        const err = `Missing XiotBox configuration (DEVICE_ID or DEVICE_TOKEN) for account "${accountId}".`;
+        log?.error?.(`[XiotBox][${accountId}] ${err}`);
         throw new Error(err);
       }
 
@@ -297,7 +365,7 @@ export const xiotboxPlugin = {
             From: payload?.from || 'xiotbox',
             To: finalCfg.DEVICE_ID,
             SessionKey: sessionKey,
-            AccountId: 'default',
+            AccountId: accountId,
             MessageSid: cmdId,
             TraceId: traceId,
             ChatType: 'direct',
@@ -383,33 +451,33 @@ export const xiotboxPlugin = {
       });
 
       client.on('connected', () => {
-        log?.info?.('[XiotBox] Connected to Gateway');
+        log?.info?.(`[XiotBox][${accountId}] Connected to Gateway`);
         e2e.refreshPeerKey().catch((err: any) => {
-          log?.warn?.(`[XiotBox] E2E peer key refresh failed: ${err?.message || err}`);
+          log?.warn?.(`[XiotBox][${accountId}] E2E peer key refresh failed: ${err?.message || err}`);
         });
       });
 
       client.on('disconnected', () => {
-        log?.warn?.('[XiotBox] Disconnected from Gateway');
+        log?.warn?.(`[XiotBox][${accountId}] Disconnected from Gateway`);
       });
 
       client.on('error', (err: any) => {
-        log?.error?.(`[XiotBox] Client error: ${err.message}`);
+        log?.error?.(`[XiotBox][${accountId}] Client error: ${err.message}`);
       });
 
       await client.connect();
 
       return {
         stop: async () => {
-          log?.info?.('[XiotBox] Stopping channel...');
+          log?.info?.(`[XiotBox][${accountId}] Stopping channel...`);
           await client.disconnect();
         },
       };
     },
   },
   status: {
-    probe: async ({ cfg }: any) => {
-      const channelCfg = cfg?.channels?.xiotbox || {};
+    probe: async ({ cfg, account }: any) => {
+      const channelCfg = account?.config || resolveAccountConfig(cfg, account?.accountId);
       if (channelCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID) {
         return { ok: true };
       }

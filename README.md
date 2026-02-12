@@ -11,10 +11,104 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
+
+### 双账户并存（远程 + 本地）
+
+`xiotbox` 插件支持多账户配置：`channels.xiotbox.accounts.<accountId>`。
+这样可以同时保留远程通道和本地通道，不互相覆盖。
+
+```json
+{
+  "channels": {
+    "xiotbox": {
+      "enabled": true,
+      "accounts": {
+        "remote": {
+          "enabled": true,
+          "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
+          "DEVICE_ID": "REMOTE_DEVICE_ID",
+          "DEVICE_TOKEN": "REMOTE_DEVICE_TOKEN",
+          "API_BASE_URL": "https://api.xiotbox.com",
+          "ALLOW_NEW_CLIENT_IDENTITIES": 1
+        },
+        "local": {
+          "enabled": true,
+          "GATEWAY_WSS_URL": "ws://127.0.0.1:9002/ws/openclaw",
+          "DEVICE_ID": "LOCAL_DEVICE_ID",
+          "DEVICE_TOKEN": "LOCAL_DEVICE_TOKEN",
+          "API_BASE_URL": "http://127.0.0.1:8069"
+        }
+      }
+    }
+  }
+}
+```
+
+兼容性说明：
+- 旧格式 `channels.xiotbox.DEVICE_ID/DEVICE_TOKEN` 仍然可用（会被视为 `default` 账户）。
+- 新格式下，OpenClaw 会按账户分别启动 `xiotbox` 通道实例。
+
+### OpenClaw 调用 XiotBox 本地控制（可选工具）
+
+插件已内置可选 agent tool：`xiotbox_local_control`。  
+它会调用 XiotBox 客户端的本地控制入口：`POST http://127.0.0.1:17777/v1/action`。
+
+先在 `channels.xiotbox` 配置本地控制参数：
+
+```json
+{
+  "channels": {
+    "xiotbox": {
+      "LOCAL_CONTROL_BASE_URL": "http://127.0.0.1:17777",
+      "LOCAL_CONTROL_TOKEN": "YOUR_LOCAL_CONTROL_TOKEN"
+    }
+  }
+}
+```
+
+再在 agent 工具白名单里启用（它是 optional tool）：
+
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": [
+            "xiotbox_local_control"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+工具参数示例：
+
+```json
+{
+  "action": "open_app",
+  "params": {
+    "package": "com.tencent.mm"
+  }
+}
+```
+
+```json
+{
+  "action": "tap",
+  "params": {
+    "x": 520,
+    "y": 1480
+  }
+}
+```
 
 > ⚠️ 本插件采用 **TS 开发 + dist 发布**（Feishu 路线）。  
 > 运行时入口为 `dist/index.js`，`dist/` 已提交到仓库，`openclaw plugins install ...` 后无需额外 build。  
@@ -29,7 +123,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.27
+bash scripts/update_openclaw_xiotbox.sh 1.0.31
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -58,7 +152,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.27
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.27
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
 ```
 
 推荐（Android/BotDrop）直接使用一键安装配置脚本：
@@ -69,7 +163,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.27 \
+  1.0.31 \
   1
 ```
 
@@ -81,7 +175,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.27 \
+  1.0.31 \
   1 \
   <MODEL_API_KEY> \
   deepseek-chat
@@ -95,7 +189,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.27 \
+  1.0.31 \
   1 \
   -
 ```
@@ -143,7 +237,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.27
+bash scripts/update_openclaw_xiotbox.sh 1.0.31
 openclaw plugins list
 openclaw channels list
 ```
