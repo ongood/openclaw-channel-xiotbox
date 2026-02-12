@@ -29,6 +29,9 @@ class WSSClient extends EventEmitter {
         this.maxOutbox = config.OUTBOX_MAX || 200;
         this.outboxTtlMs = config.OUTBOX_TTL_MS || 5 * 60 * 1000;
         this.helloExtra = config.HELLO_EXTRA || {};
+        this.parseWarnWindowMs = 10000;
+        this.parseWarnSuppressed = 0;
+        this.lastParseWarnAt = 0;
     }
 
     /**
@@ -69,13 +72,8 @@ class WSSClient extends EventEmitter {
             });
 
             // 接收消息
-            this.ws.on('message', (data) => {
-                try {
-                    const msg = JSON.parse(data.toString());
-                    this.handleMessage(msg);
-                } catch (err) {
-                    console.error('[WSS] Failed to parse message:', err.message);
-                }
+            this.ws.on('message', (data, isBinary) => {
+                this._onRawMessage(data, isBinary);
             });
 
             // 连接关闭
@@ -245,6 +243,63 @@ class WSSClient extends EventEmitter {
             default:
                 console.warn('[WSS] Unknown message type:', type);
         }
+    }
+
+    _onRawMessage(data, isBinary = false) {
+        const text = this._extractJsonText(data, isBinary);
+        if (!text) return;
+        try {
+            const msg = JSON.parse(text);
+            if (!msg || typeof msg !== 'object') {
+                this._warnParseIssue('non-object JSON payload', text);
+                return;
+            }
+            this.handleMessage(msg);
+        } catch (err) {
+            this._warnParseIssue(`invalid JSON (${err.message})`, text);
+        }
+    }
+
+    _extractJsonText(data, isBinary = false) {
+        let text = '';
+        if (typeof data === 'string') {
+            text = data;
+        } else if (Buffer.isBuffer(data)) {
+            text = data.toString('utf8');
+        } else if (Array.isArray(data)) {
+            text = Buffer.concat(data).toString('utf8');
+        } else if (data instanceof ArrayBuffer) {
+            text = Buffer.from(data).toString('utf8');
+        } else {
+            this._warnParseIssue('unsupported frame payload type', typeof data);
+            return null;
+        }
+
+        const trimmed = text.trim();
+        if (!trimmed) return null;
+        if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+            this._warnParseIssue(
+                isBinary ? 'binary non-json frame' : 'text non-json frame',
+                trimmed,
+            );
+            return null;
+        }
+        return trimmed;
+    }
+
+    _warnParseIssue(reason, payload) {
+        const now = Date.now();
+        const preview = String(payload || '').replace(/\s+/g, ' ').slice(0, 120);
+        if (now - this.lastParseWarnAt >= this.parseWarnWindowMs) {
+            if (this.parseWarnSuppressed > 0) {
+                console.warn(`[WSS] Suppressed ${this.parseWarnSuppressed} non-JSON frame(s)`);
+            }
+            this.parseWarnSuppressed = 0;
+            this.lastParseWarnAt = now;
+            console.warn(`[WSS] Ignored inbound frame: ${reason}${preview ? `; preview="${preview}"` : ''}`);
+            return;
+        }
+        this.parseWarnSuppressed += 1;
     }
 
     /**
