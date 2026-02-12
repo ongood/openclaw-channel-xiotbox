@@ -153,9 +153,11 @@ openclaw channels list
 - 旧键 `plugins.entries.openclaw-channel-xiotbox` / `plugins.installs.openclaw-channel-xiotbox` -> `*.xiotbox`
 - 若存在 `channels.openclaw-channel-xiotbox`，会与 `channels.xiotbox` 合并后统一写回 `channels.xiotbox`
 
-## Mode 2: Bridge Mode (Recommended for stability/media)
+## Mode 2: Bridge Mode (Process Mode, E2E aligned)
 
 Run as a standalone service that bridges XiotBox to a local OpenClaw Gateway.
+Bridge mode now uses the same XiotBox E2E envelope flow as plugin mode
+(`OGE2E1`, peer refresh, trust pinning, and `e2e_multi` fanout).
 
 ### Prerequisites
 - Node.js >= 18
@@ -217,7 +219,7 @@ npm start
 ## Architecture
 
 - **Plugin Mode**: `index.ts` registers as an OpenClaw Channel Plugin and dispatches to OpenClaw runtime.
-- **Bridge Mode**: `bridge.js` connects to OpenClaw Gateway as an Operator Client.
+- **Bridge Mode**: `bridge.js` connects to OpenClaw Gateway as an Operator Client and keeps E2E reply behavior aligned with plugin mode.
 
 ## Release Checklist
 
