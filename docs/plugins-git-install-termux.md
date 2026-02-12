@@ -328,7 +328,15 @@ grep -En "xiotbox|XiotBox|registerChannel|channel" /tmp/openclaw_start.log
 1. `open_app`
 2. `tap`
 3. `type`
-4. `open_accessibility_settings`
+4. `swipe`
+5. `long_press`
+6. `click_text`
+7. `get_screen`
+8. `get_tree`
+9. `wait_ui_change`
+10. `get_notifications`
+11. `get_app_info`
+12. `open_accessibility_settings`
 
 快速验证（OpenClaw 侧）：
 

@@ -108,6 +108,21 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 }
 ```
 
+当前可用动作（与 XiotBox Android 本地控制服务对齐）：
+
+1. `open_app`
+2. `tap`
+3. `type`
+4. `swipe`
+5. `long_press`
+6. `click_text`
+7. `get_screen`
+8. `get_tree`
+9. `wait_ui_change`
+10. `get_notifications`
+11. `get_app_info`
+12. `open_accessibility_settings`
+
 > ⚠️ 本插件采用 **TS 开发 + dist 发布**（Feishu 路线）。  
 > 运行时入口为 `dist/index.js`，`dist/` 已提交到仓库，`openclaw plugins install ...` 后无需额外 build。  
 > 如果你在本地改了源码（`src/` 或 `index.ts`），请手动执行：

@@ -62,17 +62,32 @@ function isObject(value: any): boolean {
 }
 
 export function createXiotboxLocalControlTool(options: LocalControlToolOptions = {}) {
+  const supportedActions = [
+    'open_app',
+    'tap',
+    'type',
+    'swipe',
+    'long_press',
+    'click_text',
+    'get_screen',
+    'get_tree',
+    'wait_ui_change',
+    'get_notifications',
+    'get_app_info',
+    'open_accessibility_settings',
+  ] as const;
+
   return {
     name: 'xiotbox_local_control',
     description:
-      'Call XiotBox local control API on this device (localhost). Actions: open_app, tap, type, open_accessibility_settings.',
+      'Call XiotBox local control API on this device (localhost). Actions: open_app, tap, type, swipe, long_press, click_text, get_screen, get_tree, wait_ui_change, get_notifications, get_app_info, open_accessibility_settings.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         action: {
           type: 'string',
-          enum: ['open_app', 'tap', 'type', 'open_accessibility_settings'],
+          enum: [...supportedActions],
           description: 'Action name supported by XiotBox local control server.',
         },
         params: {
