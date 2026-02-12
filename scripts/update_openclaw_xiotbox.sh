@@ -9,7 +9,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-INPUT="${1:-1.0.32}"
+INPUT="${1:-1.0.33}"
 if [[ "$INPUT" == http://* || "$INPUT" == https://* || "$INPUT" == git@* || "$INPUT" == ssh://* || "$INPUT" == file://* ]]; then
   TAG=""
   REPO="$INPUT"

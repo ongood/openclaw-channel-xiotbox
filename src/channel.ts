@@ -421,6 +421,12 @@ export const xiotboxPlugin = {
         log?.error?.(`[XiotBox][${accountId}] Client error: ${err.message}`);
       });
 
+      client.on('auth_required', (payload: any) => {
+        log?.error?.(
+          `[XiotBox][${accountId}] Gateway auth required (remote channel paused): ${payload?.message || payload?.code || 'REAUTH_REQUIRED'}`,
+        );
+      });
+
       await client.connect();
 
       return {

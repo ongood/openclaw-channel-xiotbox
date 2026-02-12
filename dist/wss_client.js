@@ -205,8 +205,13 @@ class WSSClient extends EventEmitter {
             case 'ERROR':
                 console.error('[WSS] Server error:', payload);
                 if (payload.code === 'REAUTH_REQUIRED') {
-                    console.error('[WSS] Token invalid or revoked, please re-pair this device');
-                    process.exit(1);
+                    console.error('[WSS] Token invalid or revoked, remote channel will pause until reconfigured');
+                    // Do not terminate the whole OpenClaw gateway process.
+                    // Remote XiotBox channel auth failure must not break local gateway APIs.
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.close(4001, 'XiotBox reauth required');
+                    }
+                    this.emit('auth_required', payload);
                 }
                 break;
             default:
