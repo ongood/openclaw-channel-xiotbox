@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Re-exec under bash when invoked as "sh script.sh ..." (common in Termux/BotDrop).
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+  echo "ERROR: bash is required for $0" >&2
+  exit 1
+fi
 set -euo pipefail
 
 CFG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
