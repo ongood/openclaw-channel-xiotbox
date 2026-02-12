@@ -9,7 +9,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-INPUT="${1:-1.0.31}"
+INPUT="${1:-1.0.32}"
 if [[ "$INPUT" == http://* || "$INPUT" == https://* || "$INPUT" == git@* || "$INPUT" == ssh://* || "$INPUT" == file://* ]]; then
   TAG=""
   REPO="$INPUT"
@@ -382,6 +382,12 @@ if [ -f "$CFG_PATH" ]; then
   export XIOTBOX_TRUST_PATH="${XIOTBOX_TRUST_PATH:-}"
   export XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES="${XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES:-}"
   export XIOTBOX_USE_QUERY_AUTH="${XIOTBOX_USE_QUERY_AUTH:-}"
+  export XIOTBOX_GATEWAY_BIND_DEFAULT="${XIOTBOX_GATEWAY_BIND_DEFAULT:-auto}"
+  if [ "$is_android" -eq 1 ]; then
+    export XIOTBOX_ENABLE_CHAT_COMPLETIONS="${XIOTBOX_ENABLE_CHAT_COMPLETIONS:-1}"
+  else
+    export XIOTBOX_ENABLE_CHAT_COMPLETIONS="${XIOTBOX_ENABLE_CHAT_COMPLETIONS:-0}"
+  fi
   missing=$(python3 - <<'PY'
 import json
 import os
@@ -398,6 +404,34 @@ wipe_channels = os.environ.get("OPENCLAW_WIPE_CHANNELS", "0") == "1"
 channels = data.get("channels") or {}
 existing_new = channels.get(new_id)
 existing_old = channels.get(old_id)
+
+gateway = data.get("gateway") or {}
+if not isinstance(gateway, dict):
+    gateway = {}
+
+valid_binds = {"auto", "lan", "loopback", "custom", "tailnet"}
+bind_default = (os.environ.get("XIOTBOX_GATEWAY_BIND_DEFAULT") or "auto").strip().lower()
+if bind_default not in valid_binds:
+    bind_default = "auto"
+bind_current = str(gateway.get("bind") or "").strip().lower()
+if bind_current and bind_current not in valid_binds:
+    gateway["bind"] = bind_default
+
+enable_chat_completions = os.environ.get("XIOTBOX_ENABLE_CHAT_COMPLETIONS", "0") == "1"
+if enable_chat_completions:
+    http = gateway.get("http")
+    if not isinstance(http, dict):
+        http = {}
+    endpoints = http.get("endpoints")
+    if not isinstance(endpoints, dict):
+        endpoints = {}
+    chat = endpoints.get("chatCompletions")
+    if not isinstance(chat, dict):
+        chat = {}
+    chat["enabled"] = True
+    endpoints["chatCompletions"] = chat
+    http["endpoints"] = endpoints
+    gateway["http"] = http
 
 xiot = {}
 if isinstance(existing_old, dict):
@@ -451,6 +485,7 @@ if os.environ.get("XIOTBOX_USE_QUERY_AUTH"):
 channels[new_id] = xiot
 channels.pop(old_id, None)
 data["channels"] = channels
+data["gateway"] = gateway
 cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 missing_keys = [k for k in ("GATEWAY_WSS_URL", "DEVICE_ID", "DEVICE_TOKEN") if not (str(xiot.get(k) or "").strip())]

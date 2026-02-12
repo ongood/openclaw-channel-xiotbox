@@ -11,46 +11,44 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.32
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
 
-### 双账户并存（远程 + 本地）
+### 插件配置（单账号，XiotBox 远程通道）
 
-`xiotbox` 插件支持多账户配置：`channels.xiotbox.accounts.<accountId>`。
-这样可以同时保留远程通道和本地通道，不互相覆盖。
+`xiotbox` 插件只读取 `channels.xiotbox` 顶层配置（单账号）：
 
 ```json
 {
   "channels": {
     "xiotbox": {
       "enabled": true,
-      "accounts": {
-        "remote": {
-          "enabled": true,
-          "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
-          "DEVICE_ID": "REMOTE_DEVICE_ID",
-          "DEVICE_TOKEN": "REMOTE_DEVICE_TOKEN",
-          "API_BASE_URL": "https://api.xiotbox.com",
-          "ALLOW_NEW_CLIENT_IDENTITIES": 1
-        },
-        "local": {
-          "enabled": true,
-          "GATEWAY_WSS_URL": "ws://127.0.0.1:9002/ws/openclaw",
-          "DEVICE_ID": "LOCAL_DEVICE_ID",
-          "DEVICE_TOKEN": "LOCAL_DEVICE_TOKEN",
-          "API_BASE_URL": "http://127.0.0.1:8069"
-        }
-      }
+      "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
+      "DEVICE_ID": "REMOTE_DEVICE_ID",
+      "DEVICE_TOKEN": "REMOTE_DEVICE_TOKEN",
+      "API_BASE_URL": "https://api.xiotbox.com",
+      "ALLOW_NEW_CLIENT_IDENTITIES": 1
     }
   }
 }
 ```
 
-兼容性说明：
-- 旧格式 `channels.xiotbox.DEVICE_ID/DEVICE_TOKEN` 仍然可用（会被视为 `default` 账户）。
-- 新格式下，OpenClaw 会按账户分别启动 `xiotbox` 通道实例。
+### XiotBox 客户端本地直连模式（不是插件配置）
+
+如果你的需求是“XiotBox App 与同机 OpenClaw 直接对话（跳过 Lite / 跳过 E2E）”，
+配置应写在 **客户端设置**，只需要本地网关参数：
+
+- `enableLocalOpenClawChat = true`
+- `localOpenClawGatewayBaseUrl = http://127.0.0.1:18789`
+- `localOpenClawGatewayToken = <token 或空>`
+- `localOpenClawAgentId = main`
+
+本地直连模式 **不需要**：
+- `DEVICE_ID`
+- `DEVICE_TOKEN`
+- `API_BASE_URL`
 
 ### OpenClaw 调用 XiotBox 本地控制（可选工具）
 
@@ -123,7 +121,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.31
+bash scripts/update_openclaw_xiotbox.sh 1.0.32
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -152,7 +150,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.31
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.32
 ```
 
 推荐（Android/BotDrop）直接使用一键安装配置脚本：
@@ -163,7 +161,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.31 \
+  1.0.32 \
   1
 ```
 
@@ -175,7 +173,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.31 \
+  1.0.32 \
   1 \
   <MODEL_API_KEY> \
   deepseek-chat
@@ -189,7 +187,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.31 \
+  1.0.32 \
   1 \
   -
 ```
@@ -237,7 +235,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.31
+bash scripts/update_openclaw_xiotbox.sh 1.0.32
 openclaw plugins list
 openclaw channels list
 ```
@@ -246,6 +244,8 @@ openclaw channels list
 - 旧目录 `~/.openclaw/extensions/openclaw-channel-xiotbox` -> 新目录 `~/.openclaw/extensions/xiotbox`
 - 旧键 `plugins.entries.openclaw-channel-xiotbox` / `plugins.installs.openclaw-channel-xiotbox` -> `*.xiotbox`
 - 若存在 `channels.openclaw-channel-xiotbox`，会与 `channels.xiotbox` 合并后统一写回 `channels.xiotbox`
+- 若检测到无效 `gateway.bind`（如旧值 `"all"`），会自动修复为合法值（默认 `auto`）
+- Android 环境默认会启用 `gateway.http.endpoints.chatCompletions.enabled=true`（可通过 `XIOTBOX_ENABLE_CHAT_COMPLETIONS=0` 关闭）
 
 ## Mode 2: Bridge Mode (Process Mode, E2E aligned)
 

@@ -136,15 +136,15 @@ apt-get install -y make g++
 ## D.2 安装命令
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.32
 ```
 
 或使用维护脚本（含预检与配置归一化）：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.31
+bash scripts/update_openclaw_xiotbox.sh 1.0.32
 # 或
-bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
+bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.32
 ```
 
 推荐在 BotDrop 直接使用参数化脚本（安装 + 配置 + 启动）：
@@ -155,7 +155,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.31 \
+  1.0.32 \
   1
 ```
 
@@ -167,7 +167,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.31 \
+  1.0.32 \
   1 \
   <MODEL_API_KEY> \
   deepseek-chat
@@ -181,7 +181,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.31 \
+  1.0.32 \
   1 \
   -
 ```
@@ -200,6 +200,13 @@ bash scripts/bootstrap_xiotbox_termux.sh \
 1. `OPENCLAW_AUTO_EDIT=0`
 2. `OPENCLAW_SKIP_DOCTOR=1`
 3. `OPENCLAW_RESTART_GATEWAY=1`
+4. 自动修复无效 `gateway.bind`（例如旧值 `"all"`）为合法值（默认 `auto`）
+5. Android 默认自动启用 `gateway.http.endpoints.chatCompletions.enabled=true`
+
+可选环境变量：
+
+1. `XIOTBOX_GATEWAY_BIND_DEFAULT=loopback|auto|lan|custom|tailnet`（默认 `auto`）
+2. `XIOTBOX_ENABLE_CHAT_COMPLETIONS=0|1`（Android 默认 `1`，其它环境默认 `0`）
 
 ## D.2.1 DeepSeek 配置（不走 UI，防止覆盖手工配置）
 
@@ -235,7 +242,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.31
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.32
 ```
 
 ## D.3.1 健康检查脚本（插件 + 模型 + gateway）
@@ -330,33 +337,32 @@ openclaw message \
   --text "调用 xiotbox_local_control: action=open_app, package=com.tencent.mm"
 ```
 
-## D.7 双账户配置（远程 + 本地）
+## D.7 插件配置（单账号，仅远程 XiotBox 通道）
 
-支持 `channels.xiotbox.accounts.<accountId>`：
+`xiotbox` 插件只读取 `channels.xiotbox` 顶层字段（`GATEWAY_WSS_URL + DEVICE_ID + DEVICE_TOKEN`）。
+它不是客户端“本地直连 OpenClaw”配置。
 
 ```json
 {
   "channels": {
     "xiotbox": {
       "enabled": true,
-      "accounts": {
-        "remote": {
-          "enabled": true,
-          "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
-          "DEVICE_ID": "REMOTE_DEVICE_ID",
-          "DEVICE_TOKEN": "REMOTE_DEVICE_TOKEN"
-        },
-        "local": {
-          "enabled": true,
-          "GATEWAY_WSS_URL": "ws://127.0.0.1:9002/ws/openclaw",
-          "DEVICE_ID": "LOCAL_DEVICE_ID",
-          "DEVICE_TOKEN": "LOCAL_DEVICE_TOKEN"
-        }
-      }
+      "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
+      "DEVICE_ID": "REMOTE_DEVICE_ID",
+      "DEVICE_TOKEN": "REMOTE_DEVICE_TOKEN"
     }
   }
 }
 ```
+
+客户端本地直连 OpenClaw（同机聊天）应在 XiotBox App 内配置：
+
+1. `enableLocalOpenClawChat = true`
+2. `localOpenClawGatewayBaseUrl = http://127.0.0.1:18789`
+3. `localOpenClawGatewayToken = <token or empty>`
+4. `localOpenClawAgentId = main`
+
+本地直连不依赖 `DEVICE_ID/DEVICE_TOKEN/API_BASE_URL`。
 
 ## E. 仍需在 OpenClaw CLI 主仓完成的审查点
 

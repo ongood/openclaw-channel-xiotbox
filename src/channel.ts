@@ -17,31 +17,6 @@ function getChannelConfig(cfg: any) {
   return cfg?.channels?.[CHANNEL_ID] || {};
 }
 
-function getAccountsConfig(cfg: any): Record<string, any> {
-  const root = getChannelConfig(cfg);
-  const accounts = root?.accounts;
-  if (accounts && typeof accounts === 'object' && !Array.isArray(accounts)) {
-    return accounts;
-  }
-  return {};
-}
-
-function resolveAccountConfig(cfg: any, accountId?: string) {
-  const root = getChannelConfig(cfg);
-  const { accounts: _accounts, ...base } = root || {};
-  const id = normalizeAccountId(accountId);
-  const accounts = getAccountsConfig(cfg);
-  const direct = accounts[id];
-  if (direct && typeof direct === 'object') {
-    return { ...base, ...direct };
-  }
-  const matchedKey = Object.keys(accounts).find((key) => normalizeAccountId(key) === id);
-  if (matchedKey) {
-    return { ...base, ...(accounts[matchedKey] || {}) };
-  }
-  return base;
-}
-
 function buildConfig(channelCfg: any) {
   return {
     GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || process.env.XIOTBOX_GATEWAY_WSS || 'ws://localhost:9002/ws/openclaw',
@@ -83,27 +58,10 @@ function isConfiguredCfg(cfg: any): boolean {
 }
 
 function listAccountIds(cfg: any): string[] {
-  const ids = new Set<string>();
-  const accounts = getAccountsConfig(cfg);
-  for (const key of Object.keys(accounts)) {
-    const id = normalizeAccountId(key);
-    const accountCfg = resolveAccountConfig(cfg, id);
-    const deviceId = accountCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID;
-    const deviceToken = accountCfg.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN;
-    if (deviceId && deviceToken) {
-      ids.add(id);
-    }
-  }
-
-  // Backward compatibility: single-account root-level config.
   const root = getChannelConfig(cfg);
   const rootDeviceId = root.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID;
   const rootDeviceToken = root.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN;
-  if (rootDeviceId && rootDeviceToken) {
-    ids.add(DEFAULT_ACCOUNT_ID);
-  }
-
-  return [...ids].sort((a, b) => a.localeCompare(b));
+  return rootDeviceId && rootDeviceToken ? [DEFAULT_ACCOUNT_ID] : [];
 }
 
 function resolveDefaultAccountId(cfg: any): string {
@@ -117,11 +75,10 @@ function resolveDefaultAccountId(cfg: any): string {
 function resolveAccount(cfg: any, accountId?: string) {
   const root = getChannelConfig(cfg);
   const resolvedAccountId = normalizeAccountId(accountId);
-  const channelCfg = resolveAccountConfig(cfg, resolvedAccountId);
   return {
     accountId: resolvedAccountId,
-    config: channelCfg,
-    enabled: root.enabled !== false && channelCfg.enabled !== false,
+    config: root,
+    enabled: root.enabled !== false,
   };
 }
 
@@ -143,7 +100,7 @@ export const xiotboxPlugin = {
     blockStreaming: false,
     outbound: false,
   },
-  reload: { configPrefixes: ['channels.xiotbox', 'channels.xiotbox.accounts'] },
+  reload: { configPrefixes: ['channels.xiotbox'] },
   config: {
     listAccountIds: (cfg: any): string[] => listAccountIds(cfg),
     resolveAccount: (cfg: any, accountId?: string) => resolveAccount(cfg, accountId),
@@ -166,9 +123,8 @@ export const xiotboxPlugin = {
   gateway: {
     startAccount: async (ctx: any) => {
       const { cfg, log } = ctx;
-      const account = ctx.account || resolveAccount(cfg, ctx.accountId);
-      const accountId = normalizeAccountId(account.accountId);
-      const finalCfg = buildConfig(account.config || {});
+      const accountId = DEFAULT_ACCOUNT_ID;
+      const finalCfg = buildConfig(getChannelConfig(cfg));
 
       if (!finalCfg.DEVICE_ID || !finalCfg.DEVICE_TOKEN) {
         const err = `Missing XiotBox configuration (DEVICE_ID or DEVICE_TOKEN) for account "${accountId}".`;
@@ -476,8 +432,8 @@ export const xiotboxPlugin = {
     },
   },
   status: {
-    probe: async ({ cfg, account }: any) => {
-      const channelCfg = account?.config || resolveAccountConfig(cfg, account?.accountId);
+    probe: async ({ cfg }: any) => {
+      const channelCfg = getChannelConfig(cfg);
       if (channelCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID) {
         return { ok: true };
       }
