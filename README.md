@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.32
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.35
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -123,6 +123,120 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 11. `get_app_info`
 12. `open_accessibility_settings`
 
+### OpenClaw 远程控制手机（小主机 OpenClaw -> 手机 XiotBox Control Agent）
+
+目标：把 OpenClaw 常驻在小主机（Linux/Mac/PC），手机只做“执行器”，通过 **同一条 XiotBox 聊天 WSS** 增加 `control` 子协议来下发动作（不新增端口）。
+
+这套链路适合解决 BotDrop/Termux 环境下 OpenClaw 网关不稳定的问题。
+
+#### 手机端（XiotBox Android）
+
+1. 登录 XiotBox。
+2. 打开：`OpenClaw -> 设置 -> 远程控制代理 (WSS)`。
+3. 点击“生成控制 Bot”，会得到一组 `device_id / device_token`（这是**控制执行器**的身份）。
+4. 配置并启用：
+   - `WSS URL`: `wss://socketd.odoo.games/ws/openclaw`（按你的部署为准）
+   - `Scopes`: `control`
+   - 开关：开启（会以前台服务常驻）
+5. 打开系统无障碍并启用 `XiotBox Control`（否则 `tap/type/click_text/get_tree` 等会失败）。
+
+#### 小主机（OpenClaw）
+
+1. 安装插件（插件负责 XiotBox 通道 + tool）：
+
+```bash
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.35
+```
+
+2. 配置 `channels.xiotbox`（这是**小主机 OpenClaw**的身份，用于发起 dispatch；与手机的 control-agent 身份不同）：
+
+```json
+{
+  "channels": {
+    "xiotbox": {
+      "enabled": true,
+      "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
+      "DEVICE_ID": "HOST_DEVICE_ID",
+      "DEVICE_TOKEN": "HOST_DEVICE_TOKEN",
+      "API_BASE_URL": "https://api.xiotbox.com",
+      "SCOPES": ["chat"]
+    }
+  }
+}
+```
+
+3. 在 agent 工具白名单里启用 `xiotbox_control`（它是 optional tool）：
+
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": [
+            "xiotbox_control"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+#### Tool：`xiotbox_control`
+
+该 tool 会通过服务端下发动作给指定手机，并且**强制“先观测后操作”**：
+- 对 `tap/swipe/long_press/click_text/type`：自动插入 `get_tree`（失败再 `get_screen`）再执行动作
+- 对 `open_app/tap/swipe/long_press/click_text/type`：动作后自动插入 `wait_ui_change`
+
+三组可直接复用的 `plan` 示例（对应验收用例 1/2/3）：
+
+1. 文本点击闭环（会自动变成 `get_tree/get_screen -> click_text -> wait_ui_change`）
+
+```json
+{
+  "device_id": "PHONE_CONTROL_DEVICE_ID",
+  "plan": [
+    { "action": "click_text", "params": { "text": "设置", "exact": true } }
+  ]
+}
+```
+
+2. 坐标操作闭环（会自动在 `tap/type` 前插入观测，在每步后插入等待）
+
+```json
+{
+  "device_id": "PHONE_CONTROL_DEVICE_ID",
+  "plan": [
+    { "action": "open_app", "params": { "package": "com.android.settings" } },
+    { "action": "tap", "params": { "x": 520, "y": 1480 } },
+    { "action": "type", "params": { "text": "hello" } }
+  ]
+}
+```
+
+3. 去重验证（同一个 `action_id` 重放不得重复执行；第二次会返回 `deduped=true`）
+
+```json
+{
+  "device_id": "PHONE_CONTROL_DEVICE_ID",
+  "plan": [
+    { "action": "tap", "action_id": "A", "params": { "x": 10, "y": 10 } },
+    { "action": "tap", "action_id": "A", "params": { "x": 10, "y": 10 } }
+  ]
+}
+```
+
+不通过 OpenClaw 也可以直接跑脚本验收（复用同一份 tool 逻辑）：
+
+```bash
+XIOTBOX_API_BASE_URL=https://api.xiotbox.com \
+XIOTBOX_DEVICE_ID=HOST_DEVICE_ID \
+XIOTBOX_DEVICE_TOKEN=HOST_DEVICE_TOKEN \
+node scripts/run_xiotbox_control_plan.mjs --device PHONE_CONTROL_DEVICE_ID --example 1
+```
+
 > ⚠️ 本插件采用 **TS 开发 + dist 发布**（Feishu 路线）。  
 > 运行时入口为 `dist/index.js`，`dist/` 已提交到仓库，`openclaw plugins install ...` 后无需额外 build。  
 > 如果你在本地改了源码（`src/` 或 `index.ts`），请手动执行：
@@ -136,7 +250,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.32
+bash scripts/update_openclaw_xiotbox.sh 1.0.35
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -165,7 +279,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.32
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.32
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.35
 ```
 
 推荐（Android/BotDrop）直接使用一键安装配置脚本：
@@ -176,7 +290,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.32 \
+  1.0.35 \
   1
 ```
 
@@ -188,7 +302,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.32 \
+  1.0.35 \
   1 \
   <MODEL_API_KEY> \
   deepseek-chat
@@ -202,7 +316,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.32 \
+  1.0.35 \
   1 \
   -
 ```
@@ -250,7 +364,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.32
+bash scripts/update_openclaw_xiotbox.sh 1.0.35
 openclaw plugins list
 openclaw channels list
 ```

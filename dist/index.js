@@ -1,6 +1,7 @@
 import { setXiotboxRuntime } from './src/runtime.js';
 import { xiotboxPlugin } from './src/channel.js';
 import { createXiotboxLocalControlTool } from './src/local-control-tool.js';
+import { createXiotboxControlTool } from './src/xiotbox-control-tool.js';
 const plugin = {
     id: 'xiotbox',
     name: 'XiotBox Channel',
@@ -10,6 +11,10 @@ const plugin = {
         api.registerChannel({ plugin: xiotboxPlugin });
         if (typeof api.registerTool === 'function') {
             api.registerTool(createXiotboxLocalControlTool({
+                getConfig: () => api?.runtime?.config?.loadConfig?.() ?? {},
+                logger: api?.logger,
+            }), { optional: true });
+            api.registerTool(createXiotboxControlTool({
                 getConfig: () => api?.runtime?.config?.loadConfig?.() ?? {},
                 logger: api?.logger,
             }), { optional: true });

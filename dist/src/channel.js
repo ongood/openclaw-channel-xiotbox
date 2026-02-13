@@ -10,6 +10,20 @@ function normalizeAccountId(value) {
     const normalized = String(value || '').trim();
     return normalized || DEFAULT_ACCOUNT_ID;
 }
+function normalizeStrList(value, fallback) {
+    if (Array.isArray(value)) {
+        const out = value.map((v) => String(v || '').trim()).filter(Boolean);
+        return out.length ? out : fallback;
+    }
+    const raw = String(value || '').trim();
+    if (!raw)
+        return fallback;
+    const parts = raw
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
+    return parts.length ? parts : fallback;
+}
 function getChannelConfig(cfg) {
     return cfg?.channels?.[CHANNEL_ID] || {};
 }
@@ -31,6 +45,10 @@ function buildConfig(channelCfg) {
         IDENTITY_KEY_PATH: channelCfg.IDENTITY_KEY_PATH || process.env.XIOTBOX_IDENTITY_KEY_PATH,
         TRUST_PATH: channelCfg.TRUST_PATH || process.env.XIOTBOX_TRUST_PATH,
         ALLOW_NEW_CLIENT_IDENTITIES: channelCfg.ALLOW_NEW_CLIENT_IDENTITIES ?? process.env.XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES,
+        // Default to chat only. Control scope should be explicitly enabled on the device that
+        // *executes* control actions (e.g. XiotBox Android Control Agent), not on the host OpenClaw.
+        SCOPES: normalizeStrList(channelCfg.SCOPES ?? process.env.XIOTBOX_SCOPES, ['chat']),
+        CONTROL_ACTIONS: normalizeStrList(channelCfg.CONTROL_ACTIONS ?? process.env.XIOTBOX_CONTROL_ACTIONS, []),
         HELLO_EXTRA: undefined,
     };
 }
@@ -380,6 +398,28 @@ export const xiotboxPlugin = {
                     };
                     client.sendMessage('COMMAND_RESULT', failPayload);
                     setCached(cmdId, failPayload);
+                }
+            });
+            client.on('CONTROL', async (payload) => {
+                // This plugin is a XiotBox chat channel. Control commands are meant for XiotBox Control agents (phones),
+                // not for the OpenClaw bot. Fail fast so the server doesn't keep retrying a mismatched delivery.
+                try {
+                    const cmdId = payload?.command_id;
+                    if (!cmdId)
+                        return;
+                    const traceId = payload?.trace_id || payload?.payload?.trace_id || null;
+                    const failPayload = {
+                        command_id: cmdId,
+                        status: 'failed',
+                        trace_id: traceId,
+                        error: 'CONTROL_NOT_SUPPORTED_ON_BOT',
+                        result: {},
+                    };
+                    client.sendMessage('COMMAND_RESULT', failPayload);
+                    setCached(cmdId, failPayload);
+                }
+                catch (_err) {
+                    // ignore
                 }
             });
             client.on('connected', () => {

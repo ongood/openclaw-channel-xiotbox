@@ -28,6 +28,10 @@ class WSSClient extends EventEmitter {
         this.maxOutbox = config.OUTBOX_MAX || 200;
         this.outboxTtlMs = config.OUTBOX_TTL_MS || 5 * 60 * 1000;
         this.helloExtra = config.HELLO_EXTRA || {};
+        // Default to chat only. Control scope should be enabled on the device that executes
+        // control actions (e.g. XiotBox Android Control Agent), not on the host OpenClaw.
+        this.scopes = Array.isArray(config.SCOPES) ? config.SCOPES : ['chat'];
+        this.controlActions = Array.isArray(config.CONTROL_ACTIONS) ? config.CONTROL_ACTIONS : [];
         this.parseWarnWindowMs = 10000;
         this.parseWarnSuppressed = 0;
         this.lastParseWarnAt = 0;
@@ -45,7 +49,8 @@ class WSSClient extends EventEmitter {
                 headers: {
                     'User-Agent': `openclaw-xiotbox/${pkg.version}`,
                     ...(this.config.DEVICE_TOKEN ? { 'Authorization': `Bearer ${this.config.DEVICE_TOKEN}` } : {}),
-                    ...(this.config.DEVICE_ID ? { 'X-Device-Id': this.config.DEVICE_ID } : {})
+                    ...(this.config.DEVICE_ID ? { 'X-Device-Id': this.config.DEVICE_ID } : {}),
+                    ...(this.scopes.length ? { 'X-OpenClaw-Scopes': this.scopes.join(',') } : {}),
                 }
             });
             // 连接成功
@@ -122,7 +127,9 @@ class WSSClient extends EventEmitter {
             capabilities: {
                 commands: ['help', 'status', 'ping', 'version'],
                 streaming: false, // 暂不支持流式输出
-                max_command_length: 10000
+                max_command_length: 10000,
+                control_actions: this.controlActions,
+                scopes: this.scopes,
             },
             runtime: {
                 platform: process.platform,
@@ -201,6 +208,9 @@ class WSSClient extends EventEmitter {
             case 'COMMAND':
                 // 触发命令事件（由 channel 处理）
                 this.emit('COMMAND', payload);
+                break;
+            case 'CONTROL':
+                this.emit('CONTROL', payload);
                 break;
             case 'ERROR':
                 console.error('[WSS] Server error:', payload);

@@ -69,6 +69,18 @@
                     "number"
                 ]
             },
+            "SCOPES": {
+                "type": [
+                    "string",
+                    "array"
+                ]
+            },
+            "CONTROL_ACTIONS": {
+                "type": [
+                    "string",
+                    "array"
+                ]
+            },
             "LOCAL_CONTROL_BASE_URL": {
                 "type": "string"
             },
