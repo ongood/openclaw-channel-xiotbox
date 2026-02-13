@@ -14,13 +14,7 @@ const PUBKEY_LEN = 32;
 const WRAP_NONCE_LEN = 12;
 const CONTENT_KEY_LEN = 32;
 const GCM_TAG_LEN = 16;
-const FORCE_NOBLE = ['1', 'true', 'yes', 'on'].includes(String(process.env.XIOTBOX_FORCE_NOBLE_X25519 || '').toLowerCase());
-const PREFER_NATIVE = ['1', 'true', 'yes', 'on'].includes(String(process.env.XIOTBOX_PREFER_NATIVE_X25519 || '').toLowerCase());
 const HAS_NATIVE_X25519 = (() => {
-    if (FORCE_NOBLE)
-        return false;
-    if (!PREFER_NATIVE)
-        return false;
     try {
         return typeof crypto.getCurves === 'function' && crypto.getCurves().includes('x25519');
     }

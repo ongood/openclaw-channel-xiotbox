@@ -38,16 +38,14 @@ function resolveToolConfig(options: LocalControlToolOptions, params: any) {
     String(
       params?.base_url ||
         channelCfg.LOCAL_CONTROL_BASE_URL ||
-        process.env.XIOTBOX_LOCAL_CONTROL_BASE_URL ||
         'http://127.0.0.1:17777',
     ).trim() || 'http://127.0.0.1:17777';
   const token = String(
-    params?.token || channelCfg.LOCAL_CONTROL_TOKEN || process.env.XIOTBOX_LOCAL_CONTROL_TOKEN || '',
+    params?.token || channelCfg.LOCAL_CONTROL_TOKEN || '',
   ).trim();
   const timeoutMs = normalizeTimeoutMs(
     params?.timeout_ms ||
       channelCfg.LOCAL_CONTROL_TIMEOUT_MS ||
-      process.env.XIOTBOX_LOCAL_CONTROL_TIMEOUT_MS ||
       8000,
   );
   return {

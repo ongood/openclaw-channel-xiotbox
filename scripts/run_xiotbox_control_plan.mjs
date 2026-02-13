@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import process from 'node:process';
 
 import { createXiotboxControlTool } from '../dist/src/xiotbox-control-tool.js';
+import { loadRuntimeConfig } from '../dist/src/runtime_config.js';
 
 function usage(code = 1) {
   const msg = `
@@ -98,9 +99,12 @@ async function main() {
     usage(1);
   }
 
-  const apiBaseUrl = (getArg('--api-base-url') || process.env.XIOTBOX_API_BASE_URL || process.env.XIOTBOX_API_BASE || '').trim();
-  const sourceDeviceId = (getArg('--source-device-id') || process.env.XIOTBOX_DEVICE_ID || '').trim();
-  const sourceDeviceToken = (getArg('--source-device-token') || process.env.XIOTBOX_DEVICE_TOKEN || '').trim();
+  const runtime = loadRuntimeConfig();
+  const { xiotbox } = runtime;
+
+  const apiBaseUrl = (getArg('--api-base-url') || xiotbox.API_BASE_URL || '').trim();
+  const sourceDeviceId = (getArg('--source-device-id') || xiotbox.DEVICE_ID || '').trim();
+  const sourceDeviceToken = (getArg('--source-device-token') || xiotbox.DEVICE_TOKEN || '').trim();
 
   if (!apiBaseUrl || !sourceDeviceId || !sourceDeviceToken) {
     console.error('ERROR: missing env/args for source credentials (api base url / device id / device token)');

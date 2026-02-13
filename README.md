@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.36
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.38
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -145,7 +145,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 1. 安装插件（插件负责 XiotBox 通道 + tool）：
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.36
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.38
 ```
 
 2. 配置 `channels.xiotbox`（这是**小主机 OpenClaw**的身份，用于发起 dispatch；与手机的 control-agent 身份不同）：
@@ -268,7 +268,7 @@ node scripts/run_xiotbox_control_plan.mjs --device PHONE_CONTROL_DEVICE_ID --exa
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.36
+bash scripts/update_openclaw_xiotbox.sh 1.0.38
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -297,7 +297,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.36
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.37
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.38
 ```
 
 推荐（Android/BotDrop）直接使用一键安装配置脚本：
@@ -308,7 +308,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.37 \
+  1.0.38 \
   1
 ```
 
@@ -320,7 +320,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.36 \
+  1.0.38 \
   1 \
   <MODEL_API_KEY> \
   deepseek-chat
@@ -334,7 +334,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.36 \
+  1.0.38 \
   1 \
   -
 ```
@@ -382,7 +382,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.36
+bash scripts/update_openclaw_xiotbox.sh 1.0.38
 openclaw plugins list
 openclaw channels list
 ```
@@ -413,43 +413,69 @@ cd openclaw-channel-xiotbox
 npm install
 ```
 
-### Configuration (.env)
+### Configuration (config.json + secret.json)
 
-Create a `.env` file:
+Bridge 模式不再依赖 `.env` 里的敏感环境变量，统一使用本地配置文件（默认路径基于 `OPENCLAW_HOME`）：
 
-```ini
-# OpenClaw Gateway Connection
-OPENCLAW_GATEWAY_HOST=127.0.0.1
-OPENCLAW_GATEWAY_PORT=18789
-GATEWAY_TOKEN=your_gateway_token_here
-CLAWDBOT_AGENT_ID=main
+- 配置文件：`$OPENCLAW_HOME/xiotbox/config.json`（默认 `~/.openclaw/xiotbox/config.json`）
+- 密钥文件：`$OPENCLAW_HOME/xiotbox/secret.json`
 
-# XiotBox Connection
-# (socketd WS 默认端口通常为 9002，可按实际部署设置)
-XIOTBOX_GATEWAY_WSS=wss://your-xiotbox-server.com:9002/ws/openclaw
-XIOTBOX_DEVICE_ID=your_device_id
-XIOTBOX_DEVICE_TOKEN=your_device_token
-# Optional: HTTP API base (required when WSS host is socketd domain)
-# If not set and /openclaw/devices/e2e/peer_key returns 404, set this.
-# XIOTBOX_API_BASE=https://your-odoo-api.com
-# Optional: E2E key storage path / rotation
-# XIOTBOX_E2E_KEY_PATH=/var/lib/openclaw/xiotbox_e2e.json
-# XIOTBOX_E2E_ROTATE=1
-# Optional: identity key (ed25519) + trust DB (pinned client identity)
-# XIOTBOX_IDENTITY_KEY_PATH=/var/lib/openclaw/xiotbox_identity.json
-# XIOTBOX_TRUST_PATH=/var/lib/openclaw/xiotbox_trust.json
-# Optional: enroll additional client identity once (for multi-endpoint PC+iOS)
-# Keep disabled by default; enable briefly during first pairing on a new endpoint.
-# XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES=1
-# Optional: x25519 backend (default uses noble JS implementation)
-# XIOTBOX_FORCE_NOBLE_X25519=1
-# If you want to try native x25519 when supported:
-# XIOTBOX_PREFER_NATIVE_X25519=1
-# 可选：如果网关只支持 query 认证，设置为 true
-# USE_QUERY_AUTH=true
-# Or use PAIR_CODE for first time setup if supported by wss_client
-# PAIR_CODE=...
+`config.json` 里包含非敏感字段（host/port/mode/flags），示例：
+
+```json
+{
+  "xiotbox": {
+    "GATEWAY_WSS_URL": "wss://your-xiotbox-server.com:9002/ws/openclaw",
+    "GATEWAY_API_URL": "https://api.xiotbox.com",
+    "USE_QUERY_AUTH": false,
+    "COMMAND_TIMEOUT": 300000,
+    "OUTBOX_MAX": 200,
+    "OUTBOX_TTL_MS": 300000,
+    "COMMAND_CACHE_TTL_MS": 600000,
+    "COMMAND_CACHE_MAX": 500,
+    "STREAMING": false,
+    "STREAM_THROTTLE_MS": 500,
+    "API_BASE_URL": "https://api.xiotbox.com",
+    "E2E_KEY_PATH": "",
+    "E2E_ROTATE": "",
+    "IDENTITY_KEY_PATH": "",
+    "TRUST_PATH": "",
+    "ALLOW_NEW_CLIENT_IDENTITIES": 1,
+    "LOCAL_CONTROL_BASE_URL": "http://127.0.0.1:17777",
+    "LOCAL_CONTROL_TIMEOUT_MS": 8000
+  },
+  "bridge": {
+    "enabled": true,
+    "endpoint": "wss://your-xiotbox-server.com:9002/ws/openclaw",
+    "allowlist": ["127.0.0.1", "localhost", "::1"],
+    "openclawHost": "127.0.0.1",
+    "openclawPort": 18789,
+    "agentId": "main"
+  }
+}
 ```
+
+`secret.json` 里只保存敏感字段（token/密钥等），示例：
+
+```json
+{
+  "xiotbox": {
+    "DEVICE_ID": "your_device_id",
+    "DEVICE_TOKEN": "your_device_token",
+    "LOCAL_CONTROL_TOKEN": "your_local_control_token"
+  },
+  "bridge": {
+    "GATEWAY_TOKEN": "your_gateway_token_here"
+  }
+}
+```
+
+> 注意：Bridge / 工具脚本不再从 `process.env` 读取任何 token/secret，敏感信息必须写入 `secret.json`。
+
+为兼容旧部署，仅保留两项桥接相关 env 作为一次性迁移/临时覆盖（只在纯配置模块里读取）：
+
+- `XIOTBOX_BRIDGE_ENABLED`
+- `XIOTBOX_BRIDGE_ENDPOINT`
 
 ### Run
 

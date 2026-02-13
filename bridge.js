@@ -5,41 +5,36 @@
  * This bridge keeps the same E2E command/result envelope behavior as plugin mode.
  */
 
-import dotenv from 'dotenv';
 import WebSocket from 'ws';
 import WSSClient from './wss_client.js';
 import { OpenClawE2E } from './dist/src/e2e.js';
+import { loadRuntimeConfig } from './dist/src/runtime_config.js';
 
-dotenv.config();
+const runtimeConfig = loadRuntimeConfig();
+const { bridge, xiotbox } = runtimeConfig;
 
-const GATEWAY_PORT = process.env.OPENCLAW_GATEWAY_PORT || 18789;
-const GATEWAY_HOST = process.env.OPENCLAW_GATEWAY_HOST || '127.0.0.1';
-const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN;
-const AGENT_ID = process.env.CLAWDBOT_AGENT_ID || 'main';
-
-function envBool(name, defaultValue = false) {
-  const v = String(process.env[name] || '').trim().toLowerCase();
-  if (!v) return defaultValue;
-  return ['1', 'true', 'yes', 'on'].includes(v);
-}
+const GATEWAY_PORT = bridge.openclawPort;
+const GATEWAY_HOST = bridge.openclawHost;
+const GATEWAY_TOKEN = bridge.GATEWAY_TOKEN;
+const AGENT_ID = bridge.agentId;
 
 const XIOTBOX_CONFIG = {
-  GATEWAY_WSS_URL: process.env.XIOTBOX_GATEWAY_WSS || 'ws://localhost:8069/ws/openclaw',
-  DEVICE_ID: process.env.XIOTBOX_DEVICE_ID,
-  DEVICE_TOKEN: process.env.XIOTBOX_DEVICE_TOKEN,
-  USE_QUERY_AUTH: envBool('USE_QUERY_AUTH', false),
-  OUTBOX_MAX: Number(process.env.XIOTBOX_OUTBOX_MAX || 200),
-  OUTBOX_TTL_MS: Number(process.env.XIOTBOX_OUTBOX_TTL_MS || 5 * 60 * 1000),
-  COMMAND_CACHE_TTL_MS: Number(process.env.XIOTBOX_COMMAND_CACHE_TTL_MS || 10 * 60 * 1000),
-  COMMAND_CACHE_MAX: Number(process.env.XIOTBOX_COMMAND_CACHE_MAX || 500),
-  STREAMING: envBool('XIOTBOX_STREAMING', false),
-  STREAM_THROTTLE_MS: Number(process.env.XIOTBOX_STREAM_THROTTLE_MS || 500),
-  API_BASE_URL: process.env.XIOTBOX_API_BASE || '',
-  E2E_KEY_PATH: process.env.XIOTBOX_E2E_KEY_PATH || '',
-  E2E_ROTATE: process.env.XIOTBOX_E2E_ROTATE || '',
-  IDENTITY_KEY_PATH: process.env.XIOTBOX_IDENTITY_KEY_PATH || '',
-  TRUST_PATH: process.env.XIOTBOX_TRUST_PATH || '',
-  ALLOW_NEW_CLIENT_IDENTITIES: process.env.XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES,
+  GATEWAY_WSS_URL: xiotbox.GATEWAY_WSS_URL,
+  DEVICE_ID: xiotbox.DEVICE_ID,
+  DEVICE_TOKEN: xiotbox.DEVICE_TOKEN,
+  USE_QUERY_AUTH: xiotbox.USE_QUERY_AUTH,
+  OUTBOX_MAX: xiotbox.OUTBOX_MAX,
+  OUTBOX_TTL_MS: xiotbox.OUTBOX_TTL_MS,
+  COMMAND_CACHE_TTL_MS: xiotbox.COMMAND_CACHE_TTL_MS,
+  COMMAND_CACHE_MAX: xiotbox.COMMAND_CACHE_MAX,
+  STREAMING: xiotbox.STREAMING,
+  STREAM_THROTTLE_MS: xiotbox.STREAM_THROTTLE_MS,
+  API_BASE_URL: xiotbox.API_BASE_URL,
+  E2E_KEY_PATH: xiotbox.E2E_KEY_PATH,
+  E2E_ROTATE: xiotbox.E2E_ROTATE,
+  IDENTITY_KEY_PATH: xiotbox.IDENTITY_KEY_PATH,
+  TRUST_PATH: xiotbox.TRUST_PATH,
+  ALLOW_NEW_CLIENT_IDENTITIES: xiotbox.ALLOW_NEW_CLIENT_IDENTITIES,
 };
 
 if (!GATEWAY_TOKEN) {

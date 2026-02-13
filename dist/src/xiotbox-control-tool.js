@@ -238,14 +238,14 @@ export function createXiotboxControlTool(options = {}) {
             }
             const cfg = options.getConfig?.() || {};
             const channelCfg = getChannelConfig(cfg);
-            const apiBaseUrl = String(params.api_base_url || channelCfg.API_BASE_URL || process.env.XIOTBOX_API_BASE || '')
+            const apiBaseUrl = String(params.api_base_url || channelCfg.API_BASE_URL || '')
                 .trim()
                 .replace(/\/+$/, '');
             if (!apiBaseUrl) {
                 return jsonResult({ ok: false, error: 'missing_api_base_url', message: 'Configure channels.xiotbox.API_BASE_URL' });
             }
-            const sourceDeviceId = String(channelCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID || '').trim();
-            const sourceToken = String(channelCfg.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN || '').trim();
+            const sourceDeviceId = String(channelCfg.DEVICE_ID || '').trim();
+            const sourceToken = String(channelCfg.DEVICE_TOKEN || '').trim();
             if (!sourceDeviceId || !sourceToken) {
                 return jsonResult({
                     ok: false,
@@ -253,11 +253,11 @@ export function createXiotboxControlTool(options = {}) {
                     message: 'Configure channels.xiotbox.DEVICE_ID / DEVICE_TOKEN for device-auth control dispatch.',
                 });
             }
-            const pollMs = normalizeInt(params.poll_ms || process.env.XIOTBOX_CONTROL_POLL_MS, 600, { min: 200, max: 5000 });
-            const httpTimeoutMs = normalizeInt(process.env.XIOTBOX_CONTROL_HTTP_TIMEOUT_MS, 10000, { min: 1000, max: 60000 });
-            const overallTimeoutMs = normalizeInt(params.timeout_ms || process.env.XIOTBOX_CONTROL_TIMEOUT_MS, 120000, { min: 1000, max: 600000 });
-            const defaultTtlMs = normalizeInt(process.env.XIOTBOX_CONTROL_DEFAULT_TTL_MS, 20000, { min: 1000, max: 300000 });
-            const defaultWaitTimeoutMs = normalizeInt(process.env.XIOTBOX_CONTROL_DEFAULT_WAIT_TIMEOUT_MS, 5000, { min: 500, max: 60000 });
+            const pollMs = normalizeInt(params.poll_ms, 600, { min: 200, max: 5000 });
+            const httpTimeoutMs = normalizeInt(undefined, 10000, { min: 1000, max: 60000 });
+            const overallTimeoutMs = normalizeInt(params.timeout_ms, 120000, { min: 1000, max: 600000 });
+            const defaultTtlMs = normalizeInt(undefined, 20000, { min: 1000, max: 300000 });
+            const defaultWaitTimeoutMs = normalizeInt(undefined, 5000, { min: 500, max: 60000 });
             const headers = {
                 Authorization: `Bearer ${sourceToken}`,
                 'X-Device-Id': sourceDeviceId,

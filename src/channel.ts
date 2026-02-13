@@ -33,9 +33,9 @@ function getChannelConfig(cfg: any) {
 
 function buildConfig(channelCfg: any) {
   return {
-    GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || process.env.XIOTBOX_GATEWAY_WSS || 'ws://localhost:9002/ws/openclaw',
-    DEVICE_ID: channelCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID,
-    DEVICE_TOKEN: channelCfg.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN,
+    GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || 'ws://localhost:9002/ws/openclaw',
+    DEVICE_ID: channelCfg.DEVICE_ID,
+    DEVICE_TOKEN: channelCfg.DEVICE_TOKEN,
     USE_QUERY_AUTH: channelCfg.USE_QUERY_AUTH || false,
     OUTBOX_MAX: channelCfg.OUTBOX_MAX || 200,
     OUTBOX_TTL_MS: channelCfg.OUTBOX_TTL_MS || 5 * 60 * 1000,
@@ -43,20 +43,16 @@ function buildConfig(channelCfg: any) {
     COMMAND_CACHE_MAX: channelCfg.COMMAND_CACHE_MAX || DEFAULT_CACHE_MAX,
     STREAMING: channelCfg.STREAMING || false,
     STREAM_THROTTLE_MS: channelCfg.STREAM_THROTTLE_MS || DEFAULT_STREAM_THROTTLE_MS,
-    API_BASE_URL: channelCfg.API_BASE_URL || process.env.XIOTBOX_API_BASE,
-    E2E_KEY_PATH: channelCfg.E2E_KEY_PATH || process.env.XIOTBOX_E2E_KEY_PATH,
-    E2E_ROTATE: channelCfg.E2E_ROTATE || process.env.XIOTBOX_E2E_ROTATE,
-    IDENTITY_KEY_PATH: channelCfg.IDENTITY_KEY_PATH || process.env.XIOTBOX_IDENTITY_KEY_PATH,
-    TRUST_PATH: channelCfg.TRUST_PATH || process.env.XIOTBOX_TRUST_PATH,
-    ALLOW_NEW_CLIENT_IDENTITIES:
-      channelCfg.ALLOW_NEW_CLIENT_IDENTITIES ?? process.env.XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES,
+    API_BASE_URL: channelCfg.API_BASE_URL,
+    E2E_KEY_PATH: channelCfg.E2E_KEY_PATH,
+    E2E_ROTATE: channelCfg.E2E_ROTATE,
+    IDENTITY_KEY_PATH: channelCfg.IDENTITY_KEY_PATH,
+    TRUST_PATH: channelCfg.TRUST_PATH,
+    ALLOW_NEW_CLIENT_IDENTITIES: channelCfg.ALLOW_NEW_CLIENT_IDENTITIES,
     // Default to chat only. Control scope should be explicitly enabled on the device that
     // *executes* control actions (e.g. XiotBox Android Control Agent), not on the host OpenClaw.
-    SCOPES: normalizeStrList(channelCfg.SCOPES ?? process.env.XIOTBOX_SCOPES, ['chat']),
-    CONTROL_ACTIONS: normalizeStrList(
-      channelCfg.CONTROL_ACTIONS ?? process.env.XIOTBOX_CONTROL_ACTIONS,
-      [],
-    ),
+    SCOPES: normalizeStrList(channelCfg.SCOPES, ['chat']),
+    CONTROL_ACTIONS: normalizeStrList(channelCfg.CONTROL_ACTIONS, []),
     HELLO_EXTRA: undefined as any,
   };
 }
@@ -80,8 +76,8 @@ function isConfiguredCfg(cfg: any): boolean {
 
 function listAccountIds(cfg: any): string[] {
   const root = getChannelConfig(cfg);
-  const rootDeviceId = root.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID;
-  const rootDeviceToken = root.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN;
+  const rootDeviceId = root.DEVICE_ID;
+  const rootDeviceToken = root.DEVICE_TOKEN;
   return rootDeviceId && rootDeviceToken ? [DEFAULT_ACCOUNT_ID] : [];
 }
 
@@ -128,16 +124,14 @@ export const xiotboxPlugin = {
     defaultAccountId: (cfg: any) => resolveDefaultAccountId(cfg),
     isConfigured: (account: any) =>
       Boolean(
-        (account?.config?.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID) &&
-          (account?.config?.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN),
+        account?.config?.DEVICE_ID && account?.config?.DEVICE_TOKEN,
       ),
     describeAccount: (account: any) => ({
       accountId: account.accountId,
       name: account.config?.name || 'XiotBox',
       enabled: account.enabled,
       configured: Boolean(
-        (account.config?.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID) &&
-          (account.config?.DEVICE_TOKEN || process.env.XIOTBOX_DEVICE_TOKEN),
+        account.config?.DEVICE_ID && account.config?.DEVICE_TOKEN,
       ),
     }),
   },
@@ -554,7 +548,7 @@ export const xiotboxPlugin = {
   status: {
     probe: async ({ cfg }: any) => {
       const channelCfg = getChannelConfig(cfg);
-      if (channelCfg.DEVICE_ID || process.env.XIOTBOX_DEVICE_ID) {
+      if (channelCfg.DEVICE_ID) {
         return { ok: true };
       }
       return { ok: false, error: 'Not configured' };

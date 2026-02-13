@@ -1,4 +1,3 @@
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import https from 'https';
@@ -6,44 +5,29 @@ import http from 'http';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
-
-dotenv.config();
+import { loadRuntimeConfig } from './dist/src/runtime_config.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('./package.json');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-
 /**
- * 加载配置（优先级：环境变量 > 配置文件）
+ * 加载配置（统一从 OPENCLAW_HOME/xiotbox/config.json + secret.json）
  */
 function load() {
-    let config = {
-        GATEWAY_WSS_URL: process.env.GATEWAY_WSS_URL || process.env.XIOTBOX_GATEWAY_WSS || '',
-        GATEWAY_API_URL: process.env.GATEWAY_API_URL || '',
-        PAIR_CODE: process.env.PAIR_CODE || '',
-        DEVICE_ID: process.env.DEVICE_ID || '',
-        DEVICE_TOKEN: process.env.DEVICE_TOKEN || '',
-        TENANT_ID: process.env.TENANT_ID || '',
-        USE_QUERY_AUTH: (process.env.USE_QUERY_AUTH || '').toLowerCase() === 'true',
-        COMMAND_TIMEOUT: parseInt(process.env.COMMAND_TIMEOUT || '300000', 10),
-        USE_QUERY_AUTH: (process.env.USE_QUERY_AUTH || '').toLowerCase() === 'true'
+    const runtime = loadRuntimeConfig();
+    const { xiotbox } = runtime;
+
+    const config = {
+        GATEWAY_WSS_URL: xiotbox.GATEWAY_WSS_URL || '',
+        GATEWAY_API_URL: xiotbox.GATEWAY_API_URL || '',
+        PAIR_CODE: '',
+        DEVICE_ID: xiotbox.DEVICE_ID || '',
+        DEVICE_TOKEN: xiotbox.DEVICE_TOKEN || '',
+        TENANT_ID: xiotbox.TENANT_ID || '',
+        USE_QUERY_AUTH: !!xiotbox.USE_QUERY_AUTH,
+        COMMAND_TIMEOUT: xiotbox.COMMAND_TIMEOUT || 300000
     };
 
-    // 从文件加载持久化配置（设备凭证）
-    if (fs.existsSync(CONFIG_FILE)) {
-        try {
-            const fileConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-            // 文件中的配置优先级低于环境变量
-            config = { ...fileConfig, ...config };
-            console.log('[Config] Loaded from file:', CONFIG_FILE);
-        } catch (err) {
-            console.warn('[Config] Failed to load config file:', err.message);
-        }
-    }
-
-    // 自动推断 GATEWAY_API_URL（如果未设置）
     if (!config.GATEWAY_API_URL && config.GATEWAY_WSS_URL) {
         config.GATEWAY_API_URL = config.GATEWAY_WSS_URL
             .replace('wss://', 'https://')
@@ -58,17 +42,37 @@ function load() {
  * 保存配置到文件（只保存设备凭证）
  */
 function save(config) {
-    const toSave = {
-        DEVICE_ID: config.DEVICE_ID,
-        DEVICE_TOKEN: config.DEVICE_TOKEN,
-        GATEWAY_WSS_URL: config.GATEWAY_WSS_URL,
-        GATEWAY_API_URL: config.GATEWAY_API_URL,
-        TENANT_ID: config.TENANT_ID
+    const runtime = loadRuntimeConfig();
+
+    const nextConfig = {
+        xiotbox: {
+            ...runtime.xiotbox,
+            GATEWAY_WSS_URL: config.GATEWAY_WSS_URL,
+            GATEWAY_API_URL: config.GATEWAY_API_URL,
+            TENANT_ID: config.TENANT_ID,
+            USE_QUERY_AUTH: !!config.USE_QUERY_AUTH,
+            COMMAND_TIMEOUT: config.COMMAND_TIMEOUT || runtime.xiotbox.COMMAND_TIMEOUT
+        },
+        bridge: {
+            ...runtime.bridge
+        }
+    };
+
+    const nextSecrets = {
+        xiotbox: {
+            DEVICE_ID: config.DEVICE_ID,
+            DEVICE_TOKEN: config.DEVICE_TOKEN,
+            LOCAL_CONTROL_TOKEN: runtime.xiotbox.LOCAL_CONTROL_TOKEN
+        },
+        bridge: {
+            GATEWAY_TOKEN: runtime.bridge.GATEWAY_TOKEN
+        }
     };
 
     try {
-        fs.writeFileSync(CONFIG_FILE, JSON.stringify(toSave, null, 2), 'utf8');
-        console.log('[Config] Saved to', CONFIG_FILE);
+        fs.writeFileSync(runtime.configPath, JSON.stringify(nextConfig, null, 2), 'utf8');
+        fs.writeFileSync(runtime.secretPath, JSON.stringify(nextSecrets, null, 2), 'utf8');
+        console.log('[Config] Saved to', runtime.configPath);
     } catch (err) {
         console.error('[Config] Failed to save config:', err.message);
     }
@@ -79,7 +83,7 @@ function save(config) {
  */
 async function pair(config) {
     if (!config.PAIR_CODE) {
-        throw new Error('PAIR_CODE not provided (set via environment variable or .env)');
+        throw new Error('PAIR_CODE not provided (set in config.PAIR_CODE before calling pair)');
     }
 
     const apiUrl = config.GATEWAY_API_URL;
