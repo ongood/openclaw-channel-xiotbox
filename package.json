@@ -1,6 +1,6 @@
 {
     "name": "xiotbox",
-    "version": "1.0.38",
+    "version": "1.0.39",
     "description": "OpenClaw plugin for XiotBox connectivity via WebSocket",
     "type": "module",
     "main": "dist/index.js",
@@ -15,8 +15,8 @@
         "start": "node bridge.js",
         "build": "tsc -p tsconfig.json",
         "clean": "rm -rf dist",
-    "prepack": "npm run build",
-    "check:env": "node scripts/check_no_env_outside_runtime_config.mjs"
+        "prepack": "npm run build",
+        "check:env": "node scripts/check_no_env_outside_runtime_config.mjs"
     },
     "dependencies": {
         "@noble/curves": "^1.4.0",

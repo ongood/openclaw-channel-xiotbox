@@ -1,6 +1,6 @@
 import WSSClient from '../wss_client.js';
-import { getXiotboxRuntime } from './runtime.js';
-import { OpenClawE2E } from './e2e.js';
+import { getXiotboxRuntime } from '../src/runtime.js';
+import { OpenClawE2E } from '../src/e2e.js';
 
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;
@@ -57,119 +57,9 @@ function buildConfig(channelCfg: any) {
   };
 }
 
-/**
- * Robust text extraction:
- * - supports common fields (markdown/text/body/output_text/etc.)
- * - supports arrays: parts/content/messages
- * - supports nested objects recursively (safe depth + cycle guard)
- * - supports streaming/delta-like fields
- */
 function normalizeTextPayload(payload: any): string {
   if (typeof payload === 'string') return payload;
-  if (!payload) return '';
-
-  const acc: string[] = [];
-  const visited = new WeakSet<object>();
-  const MAX_DEPTH = 6;
-
-  const pushText = (v: any) => {
-    if (!v) return;
-    if (typeof v === 'string') {
-      const s = v.trimEnd();
-      if (s) acc.push(s);
-      return;
-    }
-    if (typeof v === 'number' || typeof v === 'boolean') {
-      acc.push(String(v));
-      return;
-    }
-    // objects handled by walk
-  };
-
-  const walk = (obj: any, depth: number) => {
-    if (!obj || depth > MAX_DEPTH) return;
-    if (typeof obj === 'string' || typeof obj === 'number' || typeof obj === 'boolean') {
-      pushText(obj);
-      return;
-    }
-    if (Array.isArray(obj)) {
-      for (const it of obj) walk(it, depth + 1);
-      return;
-    }
-    if (typeof obj !== 'object') return;
-
-    if (visited.has(obj)) return;
-    visited.add(obj);
-
-    // 1) direct/common fields
-    const directKeys = [
-      'markdown',
-      'text',
-      'body',
-      'content_text',
-      'output_text',
-      'outputText',
-      'message',
-      'message_text',
-      'reply',
-      'answer',
-      'final',
-      'final_text',
-    ];
-    for (const k of directKeys) {
-      if (obj[k] !== undefined) {
-        const v = obj[k];
-        // sometimes message is nested object; allow recursion
-        if (typeof v === 'object' && v) {
-          walk(v, depth + 1);
-        } else {
-          pushText(v);
-        }
-      }
-    }
-
-    // 2) parts/content arrays
-    if (Array.isArray(obj.parts)) walk(obj.parts, depth + 1);
-    if (Array.isArray(obj.content)) walk(obj.content, depth + 1);
-
-    // 3) common nested containers
-    if (obj.content && typeof obj.content === 'object') walk(obj.content, depth + 1);
-    if (obj.part && typeof obj.part === 'object') walk(obj.part, depth + 1);
-
-    // 4) streaming/delta-ish
-    // many providers use delta/content_delta/choices[].delta etc.
-    if (obj.delta !== undefined) walk(obj.delta, depth + 1);
-    if (obj.content_delta !== undefined) walk(obj.content_delta, depth + 1);
-    if (Array.isArray(obj.choices)) walk(obj.choices, depth + 1);
-    if (obj.choice && typeof obj.choice === 'object') walk(obj.choice, depth + 1);
-
-    // 5) if this object looks like a "typed segment", try common patterns
-    // e.g. {type:'text', text:'...'} or {type:'output_text', text:{value:'...'}}
-    if (obj.type && (obj.text !== undefined || obj.value !== undefined || obj.content !== undefined)) {
-      walk(obj.text, depth + 1);
-      walk(obj.value, depth + 1);
-      // obj.content already handled above
-    }
-
-    // 6) last resort: try a few known subkeys that often carry text
-    const fallbackKeys = ['value', 'raw', 'display', 'caption', 'title'];
-    for (const k of fallbackKeys) {
-      if (obj[k] !== undefined) {
-        const v = obj[k];
-        if (typeof v === 'object' && v) walk(v, depth + 1);
-        else pushText(v);
-      }
-    }
-  };
-
-  walk(payload, 0);
-
-  // Join with newline to avoid "sticking" blocks together.
-  return acc
-    .map((s) => String(s))
-    .filter((s) => s.trim().length > 0)
-    .join('\n')
-    .trim();
+  return payload?.markdown || payload?.text || payload?.body || '';
 }
 
 function shouldSkipReply(text: string): boolean {
@@ -209,43 +99,6 @@ function resolveAccount(cfg: any, accountId?: string) {
   };
 }
 
-function detectToolSignals(outPayload: any): boolean {
-  if (!outPayload || typeof outPayload !== 'object') return false;
-  return Boolean(
-    outPayload.tool_calls ||
-      outPayload.toolCalls ||
-      outPayload.tool_call ||
-      outPayload.function_call ||
-      outPayload.functionCall ||
-      outPayload.action ||
-      outPayload.actions ||
-      outPayload.observation ||
-      outPayload.observations ||
-      outPayload.tool_result ||
-      outPayload.toolResult,
-  );
-}
-
-function summarizeToolSignals(outPayload: any): string {
-  if (!outPayload || typeof outPayload !== 'object') return '';
-  const names: string[] = [];
-  const tc = outPayload.tool_calls || outPayload.toolCalls;
-  if (Array.isArray(tc)) {
-    for (const t of tc) {
-      const name = t?.name || t?.tool || t?.tool_name || t?.function?.name;
-      if (name) names.push(String(name));
-    }
-  }
-  const fc = outPayload.function_call || outPayload.functionCall;
-  if (fc?.name) names.push(String(fc.name));
-  const act = outPayload.action;
-  if (typeof act === 'string') names.push(act);
-
-  const uniq = Array.from(new Set(names.map((s) => s.trim()).filter(Boolean)));
-  if (!uniq.length) return '';
-  return `tool=${uniq.join(',')}`;
-}
-
 export const xiotboxPlugin = {
   id: CHANNEL_ID,
   meta: {
@@ -270,12 +123,16 @@ export const xiotboxPlugin = {
     resolveAccount: (cfg: any, accountId?: string) => resolveAccount(cfg, accountId),
     defaultAccountId: (cfg: any) => resolveDefaultAccountId(cfg),
     isConfigured: (account: any) =>
-      Boolean(account?.config?.DEVICE_ID && account?.config?.DEVICE_TOKEN),
+      Boolean(
+        account?.config?.DEVICE_ID && account?.config?.DEVICE_TOKEN,
+      ),
     describeAccount: (account: any) => ({
       accountId: account.accountId,
       name: account.config?.name || 'XiotBox',
       enabled: account.enabled,
-      configured: Boolean(account.config?.DEVICE_ID && account.config?.DEVICE_TOKEN),
+      configured: Boolean(
+        account.config?.DEVICE_ID && account.config?.DEVICE_TOKEN,
+      ),
     }),
   },
   gateway: {
@@ -300,7 +157,7 @@ export const xiotboxPlugin = {
         throw new Error(err);
       }
 
-      const commandCache = new Map<string, any>();
+      const commandCache = new Map();
       const e2e = new OpenClawE2E(finalCfg, log);
       e2e.init();
       try {
@@ -308,7 +165,6 @@ export const xiotboxPlugin = {
       } catch (err: any) {
         log?.warn?.(`[XiotBox] E2E peer key not ready: ${err?.message || err}`);
       }
-
       finalCfg.HELLO_EXTRA = {
         e2e: e2e.helloPayload(),
         thread_id: e2e.threadId || undefined,
@@ -362,7 +218,6 @@ export const xiotboxPlugin = {
           });
 
           const incoming = payload?.payload || payload || {};
-
           // Always refresh client peer key before handling a command.
           // This avoids encrypting reply with stale key after mobile/desktop key rotation.
           const cachedPeerPublicKey = e2e.peerPublicKey || '';
@@ -384,7 +239,6 @@ export const xiotboxPlugin = {
               e2e.peerTrustError = refreshErr;
             }
           }
-
           const env = (incoming?.magic === 'OGE2E1' ? incoming : incoming?.e2e) || null;
           if (!env || env.magic !== 'OGE2E1') {
             const failPayload = {
@@ -398,7 +252,6 @@ export const xiotboxPlugin = {
             setCached(cmdId, failPayload);
             return;
           }
-
           const contentType = incoming?.content_type || incoming?.contentType || 'text/markdown';
           const threadId = incoming?.thread_id || e2e.threadId || '';
           let text = '';
@@ -412,7 +265,7 @@ export const xiotboxPlugin = {
               chunk_seq: 0,
               enc_v: e2e.encV,
             });
-          } catch (_err: any) {
+          } catch (err: any) {
             const failPayload = {
               command_id: cmdId,
               status: 'failed',
@@ -424,7 +277,6 @@ export const xiotboxPlugin = {
             setCached(cmdId, failPayload);
             return;
           }
-
           const replyPeers = e2e.collectReplyPeers(incoming);
           if (!replyPeers.length) {
             const failPayload = {
@@ -438,7 +290,6 @@ export const xiotboxPlugin = {
             setCached(cmdId, failPayload);
             return;
           }
-
           const buildEncryptedResult = (replyText: string, seq: number) => {
             const e2eMulti: Record<string, any> = {};
             let primaryEnv: any = null;
@@ -476,7 +327,6 @@ export const xiotboxPlugin = {
               chunk_seq: seq,
             };
           };
-
           const sessionKey = `xiotbox:${finalCfg.DEVICE_ID}`;
 
           const inboundCtx = {
@@ -503,8 +353,8 @@ export const xiotboxPlugin = {
             },
           };
 
-          // OpenClaw dispatcher returns metadata and delivers actual reply payloads
-          // asynchronously via `deliver(payload, { kind })`.
+          // OpenClaw's dispatcher returns `{ queuedFinal: boolean, counts }` and delivers actual reply payloads
+          // asynchronously via `deliver(payload, { kind })`. Do NOT treat `queuedFinal` as reply text.
           let lastText = '';
           let finalText = '';
           const blockParts: string[] = [];
@@ -513,35 +363,10 @@ export const xiotboxPlugin = {
           let dispatchMeta: { queuedFinal?: boolean; counts?: Record<string, number> } | null = null;
           const skipEvents: Array<{ kind: string; reason: string }> = [];
 
-          // Signals to avoid "empty success"
-          let sawAnyDeliver = false;
-          let sawToolLikeDeliver = false;
-          let sawNonTextDeliver = false;
-
           const deliver = async (outPayload: any, info?: any) => {
             const kind = info?.kind || 'block';
-            sawAnyDeliver = true;
-
-            const hasTool = detectToolSignals(outPayload);
-            if (hasTool) sawToolLikeDeliver = true;
-
             const replyText = normalizeTextPayload(outPayload);
-
-            const keysPresent =
-              outPayload && typeof outPayload === 'object'
-                ? Object.keys(outPayload).sort()
-                : [String(typeof outPayload)];
-
-            log?.debug?.(
-              `[XiotBox] deliver kind=${kind} text_len=${replyText.length} has_tool=${hasTool} keys=${JSON.stringify(keysPresent)} ${summarizeToolSignals(outPayload)}`,
-            );
-
-            if (!replyText) {
-              sawNonTextDeliver = true;
-              // Internal event / tool call / observation with no human text.
-              // Do not emit as chat bubble.
-              return;
-            }
+            if (!replyText) return;
 
             lastText = replyText;
             if (kind === 'block') {
@@ -551,14 +376,11 @@ export const xiotboxPlugin = {
             }
 
             if (!finalCfg.STREAMING) return;
-
             // Only stream block replies to avoid leaking tool payloads to the chat UI.
             if (kind !== 'block') return;
-
             const now = Date.now();
             if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
             lastStreamAt = now;
-
             chunkSeq += 1;
             client.sendMessage('COMMAND_RESULT', {
               command_id: cmdId,
@@ -570,7 +392,8 @@ export const xiotboxPlugin = {
 
           const fullConfig = runtime?.config?.loadConfig?.() ?? cfg;
 
-          // Prefer deterministic dispatch path that waits for all queued deliveries before finalizing.
+          // Prefer a deterministic dispatch path that waits for all queued deliveries before finalizing.
+          // This avoids intermittent blank replies caused by async delivery after `dispatchReply*` resolves.
           const replyApi = runtime?.channel?.reply;
           const createDispatcher = replyApi?.createReplyDispatcherWithTyping;
           const finalizeCtx = replyApi?.finalizeInboundContext;
@@ -600,7 +423,6 @@ export const xiotboxPlugin = {
               replyResolver: null,
               replyOptions,
             });
-
             await dispatcher.waitForIdle();
             markDispatchIdle();
           } else {
@@ -618,72 +440,43 @@ export const xiotboxPlugin = {
             await Promise.resolve();
           }
 
-          // Prefer finalText, then blocks (joined with newline), then lastText
-          const blocksText = blockParts.join('\n');
-          let resolvedFinalText = (finalText || blocksText || lastText || '').trim();
+          const blocksText = blockParts.join('');
+          const resolvedFinalText = finalText || blocksText || lastText || '';
 
-          // IMPORTANT: Never send "success" with empty text as a normal reply,
-          // because downstream clients often render it as an empty bubble.
-          //
-          // If OpenClaw produced only tool/observation events with no human text,
-          // emit a small non-empty placeholder so users don't think the bot "didn't reply".
-          const toolOnlyPlaceholder = '（已执行操作步骤，无额外文字回复）';
-
-          if (!resolvedFinalText) {
-            const metaStr = dispatchMeta ? JSON.stringify(dispatchMeta) : 'null';
-            const skipsStr = skipEvents.length ? JSON.stringify(skipEvents) : '[]';
-
-            // If OpenClaw queued something but we got no text, treat as failure (bug/merge issue).
-            const queuedFinal = Boolean(dispatchMeta?.queuedFinal || (dispatchMeta?.counts?.final || 0) > 0);
-
-            // If we saw tool-like deliveries or non-text deliveries, it's likely tool-only.
-            const toolOnlyLikely = sawToolLikeDeliver || sawNonTextDeliver;
-
-            if (queuedFinal && !toolOnlyLikely) {
-              const failPayload = {
-                command_id: cmdId,
-                status: 'failed',
-                trace_id: traceId,
-                error: 'empty_reply_from_openclaw',
-                result: {},
-              };
-              log?.warn?.(
-                `[XiotBox] empty reply (queuedFinal=true) cmdId=${cmdId} traceId=${traceId || ''} sawDeliver=${sawAnyDeliver} toolOnly=${toolOnlyLikely} meta=${metaStr} skips=${skipsStr}`,
-              );
-              client.sendMessage('COMMAND_RESULT', failPayload);
-              setCached(cmdId, failPayload);
-              return;
-            }
-
-            if (toolOnlyLikely) {
-              resolvedFinalText = toolOnlyPlaceholder;
-            } else {
-              // No deliver at all / truly silent completion: still avoid empty bubble.
-              // Use a tiny placeholder to keep UX consistent.
-              resolvedFinalText = toolOnlyPlaceholder;
-              log?.debug?.(
-                `[XiotBox] silent/empty completion -> placeholder cmdId=${cmdId} traceId=${traceId || ''} sawDeliver=${sawAnyDeliver} meta=${metaStr} skips=${skipsStr}`,
-              );
-            }
+          if (!shouldSkipReply(resolvedFinalText)) {
+            const successPayload = {
+              command_id: cmdId,
+              status: 'success',
+              trace_id: traceId,
+              result: buildEncryptedResult(resolvedFinalText, chunkSeq),
+            };
+            client.sendMessage('COMMAND_RESULT', successPayload);
+            setCached(cmdId, successPayload);
+          } else if (dispatchMeta?.queuedFinal || (dispatchMeta?.counts?.final || 0) > 0) {
+            // Unexpected: OpenClaw said it queued a final reply, but we ended up with an empty/skip payload.
+            const failPayload = {
+              command_id: cmdId,
+              status: 'failed',
+              trace_id: traceId,
+              error: 'empty_reply_from_openclaw',
+              result: {},
+            };
+            log?.warn?.(
+              `[XiotBox] empty reply cmdId=${cmdId} traceId=${traceId || ''} meta=${JSON.stringify(dispatchMeta)} skips=${JSON.stringify(skipEvents)}`,
+            );
+            client.sendMessage('COMMAND_RESULT', failPayload);
+            setCached(cmdId, failPayload);
+          } else {
+            // Still finalize to avoid hanging commands (NO_REPLY / silent cases).
+            const emptyPayload = {
+              command_id: cmdId,
+              status: 'success',
+              trace_id: traceId,
+              result: buildEncryptedResult('', chunkSeq),
+            };
+            client.sendMessage('COMMAND_RESULT', emptyPayload);
+            setCached(cmdId, emptyPayload);
           }
-
-          // If explicitly asked for NO_REPLY semantics, respect it, but still avoid empty bubble:
-          // - Here we interpret NO_REPLY as "do not show a normal chat bubble"
-          // - However downstream may not support it; safest is to return a tiny placeholder.
-          if (shouldSkipReply(resolvedFinalText)) {
-            resolvedFinalText = toolOnlyPlaceholder;
-          }
-
-          // Final success payload
-          chunkSeq += 1;
-          const successPayload = {
-            command_id: cmdId,
-            status: 'success',
-            trace_id: traceId,
-            result: buildEncryptedResult(resolvedFinalText, chunkSeq),
-          };
-          client.sendMessage('COMMAND_RESULT', successPayload);
-          setCached(cmdId, successPayload);
         } catch (err: any) {
           const cmdId = payload?.command_id;
           const traceId = payload?.trace_id || payload?.payload?.trace_id || null;
