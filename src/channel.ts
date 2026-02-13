@@ -359,15 +359,31 @@ export const xiotboxPlugin = {
             },
           };
 
+          // OpenClaw's dispatcher returns `{ queuedFinal: boolean, counts }` and delivers actual reply payloads
+          // asynchronously via `deliver(payload, { kind })`. Do NOT treat `queuedFinal` as reply text.
           let lastText = '';
+          let finalText = '';
+          const blockParts: string[] = [];
           let lastStreamAt = 0;
           let chunkSeq = 0;
+          let dispatchMeta: { queuedFinal?: boolean; counts?: Record<string, number> } | null = null;
+          const skipEvents: Array<{ kind: string; reason: string }> = [];
 
-          const deliver = async (outPayload: any) => {
+          const deliver = async (outPayload: any, info?: any) => {
+            const kind = info?.kind || 'block';
             const replyText = normalizeTextPayload(outPayload);
             if (!replyText) return;
+
             lastText = replyText;
+            if (kind === 'block') {
+              blockParts.push(replyText);
+            } else if (kind === 'final') {
+              finalText = replyText;
+            }
+
             if (!finalCfg.STREAMING) return;
+            // Only stream block replies to avoid leaking tool payloads to the chat UI.
+            if (kind !== 'block') return;
             const now = Date.now();
             if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
             lastStreamAt = now;
@@ -381,27 +397,83 @@ export const xiotboxPlugin = {
           };
 
           const fullConfig = runtime?.config?.loadConfig?.() ?? cfg;
-          const { queuedFinal } = await dispatchReply({
-            ctx: inboundCtx,
-            cfg: fullConfig,
-            replyResolver: null,
-            dispatcherOptions: {
-              deliver,
-            },
-          });
 
-          const finalText = normalizeTextPayload(queuedFinal) || lastText || '';
-          if (!shouldSkipReply(finalText)) {
+          // Prefer a deterministic dispatch path that waits for all queued deliveries before finalizing.
+          // This avoids intermittent blank replies caused by async delivery after `dispatchReply*` resolves.
+          const replyApi = runtime?.channel?.reply;
+          const createDispatcher = replyApi?.createReplyDispatcherWithTyping;
+          const finalizeCtx = replyApi?.finalizeInboundContext;
+          const dispatchFromConfig = replyApi?.dispatchReplyFromConfig;
+
+          if (createDispatcher && finalizeCtx && dispatchFromConfig) {
+            const { dispatcher, replyOptions, markDispatchIdle } = createDispatcher({
+              deliver,
+              onSkip: (_payload: any, info: any) => {
+                skipEvents.push({
+                  kind: String(info?.kind || 'unknown'),
+                  reason: String(info?.reason || 'unknown'),
+                });
+              },
+              onError: (err: any, info: any) => {
+                log?.warn?.(
+                  `[XiotBox] OpenClaw deliver error kind=${info?.kind || 'unknown'} err=${err?.message || err}`,
+                );
+              },
+            });
+
+            const finalized = finalizeCtx(inboundCtx);
+            dispatchMeta = await dispatchFromConfig({
+              ctx: finalized,
+              cfg: fullConfig,
+              dispatcher,
+              replyResolver: null,
+              replyOptions,
+            });
+            await dispatcher.waitForIdle();
+            markDispatchIdle();
+          } else {
+            // Fallback for older runtimes.
+            const { queuedFinal, counts } = await dispatchReply({
+              ctx: inboundCtx,
+              cfg: fullConfig,
+              replyResolver: null,
+              dispatcherOptions: {
+                deliver,
+              },
+            });
+            dispatchMeta = { queuedFinal, counts };
+            // Let queued microtasks flush `deliver()` at least once before we finalize.
+            await Promise.resolve();
+          }
+
+          const blocksText = blockParts.join('');
+          const resolvedFinalText = finalText || blocksText || lastText || '';
+
+          if (!shouldSkipReply(resolvedFinalText)) {
             const successPayload = {
               command_id: cmdId,
               status: 'success',
               trace_id: traceId,
-              result: buildEncryptedResult(finalText, chunkSeq),
+              result: buildEncryptedResult(resolvedFinalText, chunkSeq),
             };
             client.sendMessage('COMMAND_RESULT', successPayload);
             setCached(cmdId, successPayload);
+          } else if (dispatchMeta?.queuedFinal || (dispatchMeta?.counts?.final || 0) > 0) {
+            // Unexpected: OpenClaw said it queued a final reply, but we ended up with an empty/skip payload.
+            const failPayload = {
+              command_id: cmdId,
+              status: 'failed',
+              trace_id: traceId,
+              error: 'empty_reply_from_openclaw',
+              result: {},
+            };
+            log?.warn?.(
+              `[XiotBox] empty reply cmdId=${cmdId} traceId=${traceId || ''} meta=${JSON.stringify(dispatchMeta)} skips=${JSON.stringify(skipEvents)}`,
+            );
+            client.sendMessage('COMMAND_RESULT', failPayload);
+            setCached(cmdId, failPayload);
           } else {
-            // Still finalize to avoid hanging commands
+            // Still finalize to avoid hanging commands (NO_REPLY / silent cases).
             const emptyPayload = {
               command_id: cmdId,
               status: 'success',
