@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "profiles": {
+    "huggingface:deepseek-ai/DeepSeek-V3.2": {
+      "type": "api_key",
+      "provider": "huggingface",
+      "model": "deepseek-ai/DeepSeek-V3.2",
+      "key": "sk-xxxxxxxxx"
+    },
+    "huggingface:default": {
+      "type": "api_key",
+      "provider": "huggingface",
+      "model": "deepseek-ai/DeepSeek-V3.2",
+      "key": "sk-xxxxxxxxx"
+    },
+    "deepseek:deepseek-chat": {
+      "type": "api_key",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "key": "sk-xxxxxxxxx"
+    },
+    "deepseek:default": {
+      "type": "api_key",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "key": "sk-xxxxxxxxx"
+    }
+  },
+  "lastGood": {
+    "huggingface": "huggingface:default",
+    "deepseek": "deepseek:deepseek-chat"
+  },
+  "usageStats": {
+    "huggingface:deepseek-ai/DeepSeek-V3.2": {
+      "errorCount": 1,
+      "failureCounts": {
+        "auth": 1
+      },
+      "lastFailureAt": 1770816996122,
+      "cooldownUntil": 1770817056122
+    },
+    "huggingface:default": {
+      "errorCount": 0,
+      "lastFailureAt": 1770816997252,
+      "lastUsed": 1770816997295
+    },
+    "deepseek:deepseek-chat": {
+      "lastUsed": 1770988392443,
+      "errorCount": 0
+    },
+    "deepseek:default": {
+      "lastUsed": 1770988114726,
+      "errorCount": 0
+    }
+  }
+}

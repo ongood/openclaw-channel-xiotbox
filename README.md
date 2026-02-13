@@ -4,7 +4,7 @@ OpenClaw channel integration for XiotBox Gateway.
 
 Supports two running modes:
 1.  **Plugin Mode**: Installed via `openclaw plugins install`. Runs inside OpenClaw.
-2.  **Bridge Mode**: Runs as a standalone process (like `feishu-openclaw`). Connects to OpenClaw Gateway via WebSocket.
+2.  **Bridge Mode**: Runs as a standalone process. Connects to OpenClaw Gateway via WebSocket.
 
 ## Mode 1: Plugin Mode (Recommended for simplicity)
 
@@ -255,7 +255,7 @@ XIOTBOX_DEVICE_TOKEN=HOST_DEVICE_TOKEN \
 node scripts/run_xiotbox_control_plan.mjs --device PHONE_CONTROL_DEVICE_ID --example 1
 ```
 
-> ⚠️ 本插件采用 **TS 开发 + dist 发布**（Feishu 路线）。  
+> ⚠️ 本插件采用 **TS 开发 + dist 发布**。  
 > 运行时入口为 `dist/index.js`，`dist/` 已提交到仓库，`openclaw plugins install ...` 后无需额外 build。  
 > 如果你在本地改了源码（`src/` 或 `index.ts`），请手动执行：
 >
@@ -297,7 +297,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.36
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.36
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.37
 ```
 
 推荐（Android/BotDrop）直接使用一键安装配置脚本：
@@ -308,7 +308,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.36 \
+  1.0.37 \
   1
 ```
 

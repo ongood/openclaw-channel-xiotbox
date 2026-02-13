@@ -1,0 +1,141 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.9",
+    "lastTouchedAt": "2026-02-13T09:30:54.700Z"
+  },
+  "wizard": {
+    "lastRunAt": "2026-02-10T10:10:40.115Z",
+    "lastRunVersion": "2026.2.9",
+    "lastRunCommand": "onboard",
+    "lastRunMode": "local"
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "deepseek": {
+        "baseUrl": "https://api.deepseek.com/v1",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "deepseek-chat",
+            "name": "deepseek-chat",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 65536,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "deepseek/deepseek-chat"
+      },
+      "workspace": "/home/botdrop",
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": [
+            "xiotbox_local_control","xiotbox_control"
+          ]
+        }
+      }
+    ]
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "entries": {
+        "boot-md": {
+          "enabled": true
+        },
+        "command-logger": {
+          "enabled": true
+        },
+        "session-memory": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "channels": {
+    "xiotbox": {
+      "enabled": true,
+      "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
+      "DEVICE_ID": "xxxxxxxxx",
+      "DEVICE_TOKEN": "xxxxxxxxx",
+      "API_BASE_URL": "https://api.xiotbox.com",
+      "ALLOW_NEW_CLIENT_IDENTITIES": "1",
+      "USE_QUERY_AUTH": false,
+      "LOCAL_CONTROL_BASE_URL": "http://127.0.0.1:17777",
+      "LOCAL_CONTROL_TOKEN": "xxxxxxxxx"
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "xxxxxxxxx"
+    },
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "skills": {
+    "install": {
+      "nodeManager": "npm"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "xiotbox": {
+        "enabled": true
+      }
+    },
+    "installs": {
+      "xiotbox": {
+        "source": "npm",
+        "spec": "https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.37",
+        "installPath": "/data/data/app.botdrop/files/home/.openclaw/extensions/xiotbox",
+        "version": "1.0.37",
+        "installedAt": "2026-02-13T09:30:53.899Z"
+      }
+    }
+  }
+}
