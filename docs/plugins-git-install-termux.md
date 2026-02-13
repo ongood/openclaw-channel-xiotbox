@@ -136,15 +136,15 @@ apt-get install -y make g++
 ## D.2 安装命令
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.38
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.39
 ```
 
 或使用维护脚本（含预检与配置归一化）：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.38
+bash scripts/update_openclaw_xiotbox.sh 1.0.39
 # 或
-bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.38
+bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.39
 ```
 
 推荐在 BotDrop 直接使用参数化脚本（安装 + 配置 + 启动）：
@@ -155,7 +155,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.38 \
+  1.0.39 \
   1
 ```
 
@@ -167,7 +167,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.38 \
+  1.0.39 \
   1 \
   <MODEL_API_KEY> \
   deepseek-chat
@@ -181,7 +181,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.38 \
+  1.0.39 \
   1 \
   -
 ```
@@ -242,7 +242,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.38
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.39
 ```
 
 ## D.3.1 健康检查脚本（插件 + 模型 + gateway）
