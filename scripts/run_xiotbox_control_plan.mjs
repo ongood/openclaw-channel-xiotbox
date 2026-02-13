@@ -21,7 +21,7 @@ import { createXiotboxControlTool } from '../dist/src/xiotbox-control-tool.js';
 function usage(code = 1) {
   const msg = `
 Usage:
-  node scripts/run_xiotbox_control_plan.mjs --device <TARGET_DEVICE_ID> (--plan <file.json> | --plan-json <json> | --example <1|2|3>)
+  node scripts/run_xiotbox_control_plan.mjs --device <TARGET_DEVICE_ID> (--plan <file.json> | --plan-json <json> | --example <1|2|3|4>)
 
 Env:
   XIOTBOX_API_BASE_URL / XIOTBOX_API_BASE
@@ -56,16 +56,18 @@ function buildExamples() {
   const now = Date.now();
   const fixedActionId = `dedupe_${now}`;
   return {
-    // Use-case 1: click by text, enforce observe-before-operate.
-    1: [{ action: 'click_text', params: { text: '设置', exact: true } }],
-    // Use-case 2: open app -> tap -> type (observe-before-operate is injected for UI actions).
+    // Use-case 1: high-level launch (prefer UI click launch; open_app is fallback).
+    1: [{ action: 'launch_app', params: { app_name: '设置', strategy: 'home_click' } }],
+    // Use-case 2: launch app -> tap -> type (observe-before-operate is injected for UI actions).
     2: [
-      { action: 'open_app', params: { package: 'com.android.settings' } },
+      { action: 'launch_app', params: { app_name: '设置', package: 'com.android.settings' } },
       { action: 'tap', params: { x: 520, y: 1480 } },
       { action: 'type', params: { text: 'hello' } },
     ],
-    // Use-case 3: dedupe demonstration (same action_id twice should not execute twice on device).
-    3: [
+    // Use-case 3: fallback demonstration (force paging failure then use open_app fallback).
+    3: [{ action: 'launch_app', params: { app_name: '__not_exists__', package: 'com.android.settings' } }],
+    // Use-case 4: dedupe demonstration (same action_id twice should not execute twice on device).
+    4: [
       { action: 'tap', action_id: fixedActionId, params: { x: 10, y: 10 } },
       { action: 'tap', action_id: fixedActionId, params: { x: 10, y: 10 } },
     ],

@@ -93,8 +93,78 @@ function normalizePlan(value) {
     }
     return out;
 }
+function normalizeLaunchStrategy(value) {
+    const v = String(value || '')
+        .trim()
+        .toLowerCase();
+    if (v === 'search_click' || v === 'search')
+        return 'search_click';
+    if (v === 'fallback_open_app' || v === 'fallback')
+        return 'fallback_open_app';
+    return 'home_click';
+}
+function safeStr(value) {
+    return String(value ?? '').trim();
+}
+function resultData(result) {
+    if (!isObject(result))
+        return {};
+    if (isObject(result.data))
+        return result.data;
+    return result;
+}
+function extractForegroundPackage(appInfoResult) {
+    const data = resultData(appInfoResult);
+    return safeStr(data.window_package || data.package);
+}
+function extractRootBoundsFromTree(treeResult) {
+    const data = resultData(treeResult);
+    const tree = isObject(data.tree) ? data.tree : null;
+    const boundsStr = safeStr(tree?.bounds);
+    if (!boundsStr)
+        return null;
+    const parts = boundsStr
+        .split(/[^0-9\-]+/)
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 4);
+    if (parts.length !== 4)
+        return null;
+    const nums = parts.map((p) => Number(p));
+    if (nums.some((n) => !Number.isFinite(n)))
+        return null;
+    const [left, top, right, bottom] = nums;
+    const w = Math.max(1, right - left);
+    const h = Math.max(1, bottom - top);
+    return { left, top, right, bottom, w, h };
+}
+function looksLikeLauncherPackage(pkg) {
+    const p = safeStr(pkg).toLowerCase();
+    if (!p)
+        return false;
+    if (p.includes('launcher') || p.includes('home'))
+        return true;
+    const known = new Set([
+        'com.android.launcher',
+        'com.android.launcher3',
+        'com.google.android.apps.nexuslauncher',
+        'com.huawei.android.launcher',
+        'com.hihonor.android.launcher',
+        'com.miui.home',
+        'com.oppo.launcher',
+        'com.coloros.launcher',
+        'com.vivo.launcher',
+        'com.sec.android.app.launcher',
+        'com.samsung.android.app.launcher',
+        'com.oneplus.launcher',
+        'com.transsion.hilauncher',
+    ]);
+    return known.has(p);
+}
 export function createXiotboxControlTool(options = {}) {
     const supportedActions = [
+        // High-level tool-only action. It will be expanded into primitive control actions.
+        'launch_app',
         'open_app',
         'tap',
         'type',
@@ -112,7 +182,7 @@ export function createXiotboxControlTool(options = {}) {
     const waitAfterActions = new Set(['open_app', 'tap', 'swipe', 'long_press', 'click_text', 'type']);
     return {
         name: 'xiotbox_control',
-        description: 'Control a XiotBox phone remotely via XiotBox Gateway (WSS control). Enforces observe-before-operate: auto inserts get_tree/get_screen before UI-changing actions and wait_ui_change after them.',
+        description: 'Control a XiotBox phone remotely via XiotBox Gateway (WSS control). Enforces observe-before-operate: auto inserts get_tree/get_screen before UI-changing actions and wait_ui_change after them. Includes a high-level launch_app action that prefers UI click launch and uses open_app only as fallback.',
         parameters: {
             type: 'object',
             additionalProperties: false,
@@ -197,6 +267,7 @@ export function createXiotboxControlTool(options = {}) {
             const deadlineAt = startedAt + overallTimeoutMs;
             const stepsOut = [];
             const dispatchAndWait = async (action, actionParams, ttlMs, forcedActionId) => {
+                const stepStartedAt = Date.now();
                 const actionId = String(forcedActionId || '').trim() || uuid();
                 const dispatch = await jsonRpcCall(apiBaseUrl, '/openclaw/device/control/dispatch', {
                     target_device_id: targetDeviceId,
@@ -208,11 +279,21 @@ export function createXiotboxControlTool(options = {}) {
                     session_id: sessionId,
                 }, headers, httpTimeoutMs);
                 if (!dispatch.ok) {
-                    return { ok: false, action_id: actionId, error: dispatch.error || 'dispatch_failed' };
+                    return {
+                        ok: false,
+                        action_id: actionId,
+                        duration_ms: Date.now() - stepStartedAt,
+                        error: dispatch.error || 'dispatch_failed',
+                    };
                 }
                 const commandId = String(dispatch.result?.command_id || '').trim();
                 if (!commandId) {
-                    return { ok: false, action_id: actionId, error: 'missing_command_id' };
+                    return {
+                        ok: false,
+                        action_id: actionId,
+                        duration_ms: Date.now() - stepStartedAt,
+                        error: 'missing_command_id',
+                    };
                 }
                 const pollDeadline = Math.min(Date.now() + ttlMs + 5000, deadlineAt);
                 while (Date.now() < pollDeadline) {
@@ -225,6 +306,7 @@ export function createXiotboxControlTool(options = {}) {
                                 command_id: commandId,
                                 action_id: actionId,
                                 status,
+                                duration_ms: Date.now() - stepStartedAt,
                                 result: statusRes.result?.result,
                                 error_message: statusRes.result?.error_message || '',
                             };
@@ -235,6 +317,7 @@ export function createXiotboxControlTool(options = {}) {
                                 command_id: commandId,
                                 action_id: actionId,
                                 status,
+                                duration_ms: Date.now() - stepStartedAt,
                                 result: statusRes.result?.result,
                                 error_message: statusRes.result?.error_message || statusRes.result?.error_code || status,
                             };
@@ -242,7 +325,312 @@ export function createXiotboxControlTool(options = {}) {
                     }
                     await sleep(pollMs);
                 }
-                return { ok: false, command_id: commandId, action_id: actionId, status: 'timeout', error_message: 'TIMEOUT' };
+                return {
+                    ok: false,
+                    command_id: commandId,
+                    action_id: actionId,
+                    status: 'timeout',
+                    duration_ms: Date.now() - stepStartedAt,
+                    error_message: 'TIMEOUT',
+                };
+            };
+            const runLaunchApp = async (rawParams, groupId) => {
+                const p = isObject(rawParams) ? rawParams : {};
+                const appName = safeStr(p.app_name || p.appName);
+                const pkgExpected = safeStr(p.package);
+                const strategy = normalizeLaunchStrategy(p.strategy);
+                const timeoutMs = normalizeInt(p.timeout_ms || p.timeoutMs, 20000, { min: 1000, max: 120000 });
+                const maxPages = normalizeInt(p.max_pages || p.maxPages, 6, { min: 1, max: 12 });
+                const launchStartedAt = Date.now();
+                const launchDeadlineAt = Math.min(launchStartedAt + timeoutMs, deadlineAt);
+                const attempts = { pages: 0, clicks: 0, swipes: 0, used_open_app_fallback: false };
+                let usedStrategy = 'home_click';
+                let lastObservation = null;
+                let launcherPkgBaseline = '';
+                const pushStep = (step) => {
+                    stepsOut.push({ group: groupId, ...step });
+                };
+                const observePreferTree = async () => {
+                    const ttl = defaultTtlMs;
+                    const tree = await dispatchAndWait('get_tree', { max_depth: 8 }, ttl);
+                    pushStep({ injected: true, action: 'get_tree', ...tree });
+                    if (tree.ok) {
+                        lastObservation = {
+                            kind: 'tree',
+                            command_id: tree.command_id || '',
+                            action_id: tree.action_id || '',
+                            package: safeStr(resultData(tree.result)?.package),
+                            activity: safeStr(resultData(tree.result)?.activity),
+                            bounds: safeStr(resultData(tree.result)?.tree?.bounds),
+                        };
+                        return { ok: true, kind: 'tree', treeResult: tree };
+                    }
+                    // get_screen is a semantic snapshot (not pixels). Use max_items to cap payload size.
+                    const screen = await dispatchAndWait('get_screen', { max_items: 350 }, ttl);
+                    pushStep({ injected: true, action: 'get_screen', ...screen });
+                    lastObservation = {
+                        kind: 'screen',
+                        command_id: screen.command_id || '',
+                        action_id: screen.action_id || '',
+                        package: safeStr(resultData(screen.result)?.package),
+                        activity: safeStr(resultData(screen.result)?.activity),
+                    };
+                    return { ok: screen.ok, kind: 'screen', screenResult: screen };
+                };
+                const waitUi = async (ms) => {
+                    const ttl = Math.max(defaultTtlMs, ms + 2000);
+                    const res = await dispatchAndWait('wait_ui_change', { timeout_ms: ms }, ttl);
+                    pushStep({ injected: true, action: 'wait_ui_change', ...res });
+                    return res;
+                };
+                const getAppInfo = async () => {
+                    const ttl = defaultTtlMs;
+                    const res = await dispatchAndWait('get_app_info', {}, ttl);
+                    pushStep({ injected: true, action: 'get_app_info', ...res });
+                    return res;
+                };
+                const verifyLaunched = async () => {
+                    const info = await getAppInfo();
+                    if (!info.ok)
+                        return { ok: false, reason: 'get_app_info_failed', info };
+                    const pkg = extractForegroundPackage(info.result);
+                    if (pkgExpected) {
+                        if (pkg && pkg === pkgExpected)
+                            return { ok: true, package: pkg, info };
+                        return { ok: false, reason: 'package_mismatch', package: pkg, expected: pkgExpected, info };
+                    }
+                    if (launcherPkgBaseline && pkg && pkg !== launcherPkgBaseline) {
+                        return { ok: true, package: pkg, info };
+                    }
+                    // Fallback heuristic: compare with window_package if present.
+                    const winPkg = safeStr(resultData(info.result)?.window_package);
+                    if (launcherPkgBaseline && winPkg && winPkg !== launcherPkgBaseline) {
+                        return { ok: true, package: winPkg, info };
+                    }
+                    return { ok: false, reason: 'not_launched', package: pkg, info };
+                };
+                const tryClickAppNameOnce = async () => {
+                    await observePreferTree();
+                    if (Date.now() >= launchDeadlineAt)
+                        return { ok: false, error: 'timeout' };
+                    // Prefer exact match first.
+                    const exact = await dispatchAndWait('click_text', { text: appName, exact: true }, defaultTtlMs);
+                    attempts.clicks += 1;
+                    pushStep({ injected: false, action: 'click_text', params: { text: appName, exact: true }, ...exact });
+                    if (exact.ok)
+                        return { ok: true, used_exact: true };
+                    // Fallback to contains match.
+                    const contains = await dispatchAndWait('click_text', { text: appName, exact: false }, defaultTtlMs);
+                    attempts.clicks += 1;
+                    pushStep({ injected: false, action: 'click_text', params: { text: appName, exact: false }, ...contains });
+                    if (contains.ok)
+                        return { ok: true, used_exact: false };
+                    return { ok: false };
+                };
+                const bestEffortGoHome = async () => {
+                    const info0 = await getAppInfo();
+                    if (info0.ok) {
+                        const currentPkg = extractForegroundPackage(info0.result);
+                        if (looksLikeLauncherPackage(currentPkg)) {
+                            launcherPkgBaseline = currentPkg;
+                            return { ok: true, skipped: true, launcher_pkg: currentPkg };
+                        }
+                    }
+                    // No explicit HOME/BACK actions exist in the current primitive set.
+                    // Prefer a human-like gesture (swipe-up) to go home; only fallback to open_app if needed.
+                    const lastTree0 = stepsOut
+                        .slice()
+                        .reverse()
+                        .find((s) => s?.group === groupId && s?.action === 'get_tree' && s?.ok);
+                    const bounds0 = lastTree0 ? extractRootBoundsFromTree(lastTree0.result) : null;
+                    const w0 = bounds0?.w || 1080;
+                    const h0 = bounds0?.h || 2400;
+                    const x = Math.floor(w0 * 0.5);
+                    const y1 = Math.floor(h0 * 0.92);
+                    const y2 = Math.floor(h0 * 0.58);
+                    for (let i = 0; i < 3 && Date.now() < launchDeadlineAt; i += 1) {
+                        await observePreferTree();
+                        const swipeUp = await dispatchAndWait('swipe', { x1: x, y1, x2: x, y2, duration_ms: 280 }, defaultTtlMs);
+                        attempts.swipes += 1;
+                        pushStep({ injected: false, action: 'swipe', params: { x1: x, y1, x2: x, y2, duration_ms: 280 }, ...swipeUp });
+                        await waitUi(1200);
+                        const info = await getAppInfo();
+                        if (info.ok) {
+                            const pkg = extractForegroundPackage(info.result);
+                            if (looksLikeLauncherPackage(pkg)) {
+                                launcherPkgBaseline = pkg;
+                                return { ok: true, skipped: false, by: 'gesture_swipe' };
+                            }
+                        }
+                    }
+                    // Fallback: try launching the system launcher by common labels.
+                    const candidates = ['\u684c\u9762', 'Launcher', 'Home', '\u542f\u52a8\u5668'];
+                    for (const label of candidates) {
+                        if (Date.now() >= launchDeadlineAt)
+                            break;
+                        const res = await dispatchAndWait('open_app', { app_name: label }, defaultTtlMs);
+                        pushStep({ injected: true, action: 'open_app', params: { app_name: label }, ...res });
+                        if (res.ok) {
+                            await waitUi(1800);
+                            const info1 = await getAppInfo();
+                            if (info1.ok) {
+                                const launcherPkg = extractForegroundPackage(info1.result);
+                                launcherPkgBaseline = launcherPkg;
+                            }
+                            return { ok: true, skipped: false, by: 'fallback_open_launcher', label };
+                        }
+                    }
+                    return { ok: false, skipped: false };
+                };
+                if (!appName) {
+                    return {
+                        ok: false,
+                        final_status: 'FAILED',
+                        error: 'missing_app_name',
+                        used_strategy: usedStrategy,
+                        attempts,
+                        last_observation: lastObservation,
+                    };
+                }
+                // 0) Go to home (best-effort) so paging/clicking behaves like a human launcher workflow.
+                await bestEffortGoHome();
+                if (!launcherPkgBaseline) {
+                    const info = await getAppInfo();
+                    if (info.ok)
+                        launcherPkgBaseline = extractForegroundPackage(info.result);
+                }
+                // 1) Try click on the current home screen.
+                if (Date.now() < launchDeadlineAt) {
+                    const clicked = await tryClickAppNameOnce();
+                    if (clicked.ok) {
+                        usedStrategy = 'home_click';
+                        await waitUi(2500);
+                        const verified = await verifyLaunched();
+                        if (verified.ok) {
+                            return {
+                                ok: true,
+                                final_status: 'SUCCESS',
+                                used_strategy: usedStrategy,
+                                attempts,
+                                package: verified.package || '',
+                                last_observation: lastObservation,
+                                duration_ms: Date.now() - launchStartedAt,
+                            };
+                        }
+                    }
+                }
+                // 2) Paging: swipe across home pages and retry click_text.
+                usedStrategy = 'paging';
+                for (let i = 0; i < maxPages && Date.now() < launchDeadlineAt; i += 1) {
+                    attempts.pages = i + 1;
+                    const clicked = await tryClickAppNameOnce();
+                    if (clicked.ok) {
+                        await waitUi(2500);
+                        const verified = await verifyLaunched();
+                        if (verified.ok) {
+                            return {
+                                ok: true,
+                                final_status: 'SUCCESS',
+                                used_strategy: usedStrategy,
+                                attempts,
+                                package: verified.package || '',
+                                last_observation: lastObservation,
+                                duration_ms: Date.now() - launchStartedAt,
+                            };
+                        }
+                    }
+                    // Prepare swipe coordinates from the latest tree bounds if available.
+                    const lastTree = stepsOut
+                        .slice()
+                        .reverse()
+                        .find((s) => s?.group === groupId && s?.action === 'get_tree' && s?.ok);
+                    const bounds = lastTree ? extractRootBoundsFromTree(lastTree.result) : null;
+                    const w = bounds?.w || 1080;
+                    const h = bounds?.h || 2400;
+                    // Avoid screen edges (gesture nav zones).
+                    const x1 = Math.floor(w * 0.82);
+                    const x2 = Math.floor(w * 0.18);
+                    const y = Math.floor(h * 0.52);
+                    await observePreferTree();
+                    const swipe = await dispatchAndWait('swipe', { x1, y1: y, x2, y2: y, duration_ms: 280 }, defaultTtlMs);
+                    attempts.swipes += 1;
+                    pushStep({ injected: false, action: 'swipe', params: { x1, y1: y, x2, y2: y, duration_ms: 280 }, ...swipe });
+                    await waitUi(900);
+                }
+                // 3) Optional: search strategy (best-effort). Only if explicitly requested.
+                if (strategy === 'search_click' && Date.now() < launchDeadlineAt) {
+                    usedStrategy = 'search';
+                    // Pull down to open app drawer/search.
+                    const lastTree = stepsOut
+                        .slice()
+                        .reverse()
+                        .find((s) => s?.group === groupId && s?.action === 'get_tree' && s?.ok);
+                    const bounds = lastTree ? extractRootBoundsFromTree(lastTree.result) : null;
+                    const w = bounds?.w || 1080;
+                    const h = bounds?.h || 2400;
+                    const x = Math.floor(w * 0.5);
+                    const y1 = Math.floor(h * 0.35);
+                    const y2 = Math.floor(h * 0.75);
+                    await observePreferTree();
+                    const swipeDown = await dispatchAndWait('swipe', { x1: x, y1, x2: x, y2, duration_ms: 320 }, defaultTtlMs);
+                    attempts.swipes += 1;
+                    pushStep({ injected: false, action: 'swipe', params: { x1: x, y1, x2: x, y2, duration_ms: 320 }, ...swipeDown });
+                    await waitUi(1200);
+                    // Try to focus a search box.
+                    await observePreferTree();
+                    const searchFocus = await dispatchAndWait('click_text', { text: '\u641c\u7d22', exact: false }, defaultTtlMs);
+                    pushStep({ injected: false, action: 'click_text', params: { text: '\u641c\u7d22', exact: false }, ...searchFocus });
+                    await waitUi(800);
+                    await observePreferTree();
+                    const typed = await dispatchAndWait('type', { text: appName }, defaultTtlMs);
+                    pushStep({ injected: false, action: 'type', params: { text: appName }, ...typed });
+                    await waitUi(1200);
+                    const clicked = await tryClickAppNameOnce();
+                    if (clicked.ok) {
+                        await waitUi(2500);
+                        const verified = await verifyLaunched();
+                        if (verified.ok) {
+                            return {
+                                ok: true,
+                                final_status: 'SUCCESS',
+                                used_strategy: usedStrategy,
+                                attempts,
+                                package: verified.package || '',
+                                last_observation: lastObservation,
+                                duration_ms: Date.now() - launchStartedAt,
+                            };
+                        }
+                    }
+                }
+                // 5) Fallback: open_app only if package is provided.
+                if (pkgExpected && Date.now() < launchDeadlineAt) {
+                    usedStrategy = 'fallback_open_app';
+                    attempts.used_open_app_fallback = true;
+                    const res = await dispatchAndWait('open_app', { package: pkgExpected }, defaultTtlMs);
+                    pushStep({ injected: false, action: 'open_app', params: { package: pkgExpected }, ...res });
+                    await waitUi(2500);
+                    const verified = await verifyLaunched();
+                    if (verified.ok) {
+                        return {
+                            ok: true,
+                            final_status: 'SUCCESS',
+                            used_strategy: usedStrategy,
+                            attempts,
+                            package: verified.package || '',
+                            last_observation: lastObservation,
+                            duration_ms: Date.now() - launchStartedAt,
+                        };
+                    }
+                }
+                return {
+                    ok: false,
+                    final_status: 'FAILED',
+                    used_strategy: usedStrategy,
+                    error: 'LAUNCH_DENIED',
+                    attempts,
+                    last_observation: lastObservation,
+                    duration_ms: Date.now() - launchStartedAt,
+                };
             };
             const maybeObserveBefore = async () => {
                 const ttl = defaultTtlMs;
@@ -267,6 +655,24 @@ export function createXiotboxControlTool(options = {}) {
                 const action = normalizeAction(step.action);
                 if (!supportedActions.includes(action)) {
                     stepsOut.push({ ok: false, action, error: 'ACTION_NOT_SUPPORTED' });
+                    continue;
+                }
+                // High-level action: prefer UI click launch and only fallback to open_app.
+                if (action === 'launch_app') {
+                    const groupId = uuid();
+                    const summary = await runLaunchApp(step.params, groupId);
+                    stepsOut.push({ injected: false, action: 'launch_app', params: step.params, group: groupId, ...summary });
+                    continue;
+                }
+                // Strategy change: if caller passes app_name for open_app, treat it as a launch intent.
+                // Direct open_app remains available when only package is provided, or when explicitly forced.
+                if (action === 'open_app' &&
+                    isObject(step.params) &&
+                    !Boolean(step.params.force_open_app || step.params.direct) &&
+                    safeStr(step.params.app_name || step.params.appName)) {
+                    const groupId = uuid();
+                    const summary = await runLaunchApp(step.params, groupId);
+                    stepsOut.push({ injected: false, action: 'launch_app', params: step.params, group: groupId, ...summary });
                     continue;
                 }
                 if (observeBeforeActions.has(action)) {

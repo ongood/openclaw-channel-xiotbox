@@ -9,7 +9,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-REPO="${1:-https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.35}"
+REPO="${1:-https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.36}"
 CFG_PATH="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
 LOG_DIR="${OPENCLAW_TERMUX_LOG_DIR:-$HOME/.openclaw/logs}"
 

@@ -11,7 +11,7 @@ Supports two running modes:
 Install directly into OpenClaw:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.35
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.36
 ```
 
 配置将在 OpenClaw 插件设置界面中进行。
@@ -145,7 +145,7 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 1. 安装插件（插件负责 XiotBox 通道 + tool）：
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.35
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.36
 ```
 
 2. 配置 `channels.xiotbox`（这是**小主机 OpenClaw**的身份，用于发起 dispatch；与手机的 control-agent 身份不同）：
@@ -190,33 +190,51 @@ openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#
 - 对 `tap/swipe/long_press/click_text/type`：自动插入 `get_tree`（失败再 `get_screen`）再执行动作
 - 对 `open_app/tap/swipe/long_press/click_text/type`：动作后自动插入 `wait_ui_change`
 
-三组可直接复用的 `plan` 示例（对应验收用例 1/2/3）：
+此外，tool 内置一个高层动作 `launch_app`（仅 tool 内部，手机端不需要新增原子能力）：
+- 输入：`{ app_name, package?, strategy?, timeout_ms? }`
+- 默认策略：回到桌面（优先手势 swipe-up）→ `get_tree` → `click_text(app_name)`（exact=true 再 exact=false）→ 翻页 `swipe` 重试 → 校验（`get_app_info`）
+- 兜底：仅当 UI 点击失败且提供 `package` 时，才会调用 `open_app(package)` 再校验
 
-1. 文本点击闭环（会自动变成 `get_tree/get_screen -> click_text -> wait_ui_change`）
+注意：如果你在 `open_app` 里传了 `app_name`，且未显式设置 `force_open_app/direct`，tool 会把它当成“打开某 App”的意图，自动改用 `launch_app` 流程；只有 `open_app(package=...)` 才是直启。
+
+四组可直接复用的 `plan` 示例（对应验收用例 1/2/3 + 去重用例）：
+
+1. `launch_app`（仅 app_name，无 package；不应调用 open_app 兜底）
 
 ```json
 {
   "device_id": "PHONE_CONTROL_DEVICE_ID",
   "plan": [
-    { "action": "click_text", "params": { "text": "设置", "exact": true } }
+    { "action": "launch_app", "params": { "app_name": "设置" } }
   ]
 }
 ```
 
-2. 坐标操作闭环（会自动在 `tap/type` 前插入观测，在每步后插入等待）
+2. 坐标操作闭环（先 `launch_app`，后续会自动在 `tap/type` 前插入观测，在每步后插入等待）
 
 ```json
 {
   "device_id": "PHONE_CONTROL_DEVICE_ID",
   "plan": [
-    { "action": "open_app", "params": { "package": "com.android.settings" } },
+    { "action": "launch_app", "params": { "app_name": "设置", "package": "com.android.settings" } },
     { "action": "tap", "params": { "x": 520, "y": 1480 } },
     { "action": "type", "params": { "text": "hello" } }
   ]
 }
 ```
 
-3. 去重验证（同一个 `action_id` 重放不得重复执行；第二次会返回 `deduped=true`）
+3. 兜底触发（故意传一个找不到的 app_name，但提供 package；应触发 open_app(package) 兜底）
+
+```json
+{
+  "device_id": "PHONE_CONTROL_DEVICE_ID",
+  "plan": [
+    { "action": "launch_app", "params": { "app_name": "__not_exists__", "package": "com.android.settings" } }
+  ]
+}
+```
+
+4. 去重验证（同一个 `action_id` 重放不得重复执行；第二次应返回去重结果）
 
 ```json
 {
@@ -250,7 +268,7 @@ node scripts/run_xiotbox_control_plan.mjs --device PHONE_CONTROL_DEVICE_ID --exa
 OpenClaw CLI 不支持覆盖安装，升级请使用脚本自动清理并重装：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.35
+bash scripts/update_openclaw_xiotbox.sh 1.0.36
 ```
 
 如果你的插件目录或配置文件不在默认路径，可通过环境变量指定：
@@ -279,7 +297,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.35
 
 ```bash
 bash scripts/test_install_xiotbox_termux.sh \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.35
+  https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.36
 ```
 
 推荐（Android/BotDrop）直接使用一键安装配置脚本：
@@ -290,7 +308,7 @@ bash scripts/install_configure_xiotbox.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.35 \
+  1.0.36 \
   1
 ```
 
@@ -302,7 +320,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.35 \
+  1.0.36 \
   1 \
   <MODEL_API_KEY> \
   deepseek-chat
@@ -316,7 +334,7 @@ bash scripts/bootstrap_xiotbox_termux.sh \
   <DEVICE_ID> \
   <DEVICE_TOKEN> \
   https://api.xiotbox.com \
-  1.0.35 \
+  1.0.36 \
   1 \
   -
 ```
@@ -364,7 +382,7 @@ CLEAR_BOTDROP_TEMPLATE=0 bash scripts/configure_deepseek_termux.sh <API_KEY> dee
 ### 从旧版本升级（openclaw-channel-xiotbox -> xiotbox）
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 1.0.35
+bash scripts/update_openclaw_xiotbox.sh 1.0.36
 openclaw plugins list
 openclaw channels list
 ```
