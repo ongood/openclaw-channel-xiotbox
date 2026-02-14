@@ -183,6 +183,48 @@ function shouldSkipReply(text) {
         return true;
     return false;
 }
+// ── Hard-exit patterns: user explicitly wants to leave tool/control mode ──
+const HARD_EXIT_PATTERNS = [
+    /^\/stop\b/i,
+    /^\/exit\b/i,
+    /退出控制/,
+    /停止操控/,
+    /停止控制/,
+    /退出操控/,
+];
+function isHardExitCommand(text) {
+    const trimmed = (text || '').trim();
+    return HARD_EXIT_PATTERNS.some((re) => re.test(trimmed));
+}
+// ── Consecutive tool-only counter (keyed by thread+sender) ──
+const MAX_CONSECUTIVE_TOOL_ONLY = 3;
+const TOOL_ONLY_COUNTER_TTL_MS = 10 * 60 * 1000; // 10 min
+const toolOnlyCounters = new Map();
+function toolOnlyCounterKey(deviceId, senderId) {
+    return `${deviceId}:${senderId}`;
+}
+function incrementToolOnlyCounter(key) {
+    const now = Date.now();
+    const existing = toolOnlyCounters.get(key);
+    if (existing && now - existing.updatedAt < TOOL_ONLY_COUNTER_TTL_MS) {
+        existing.count += 1;
+        existing.updatedAt = now;
+        return existing.count;
+    }
+    toolOnlyCounters.set(key, { count: 1, updatedAt: now });
+    return 1;
+}
+function resetToolOnlyCounter(key) {
+    toolOnlyCounters.delete(key);
+}
+function pruneToolOnlyCounters() {
+    const now = Date.now();
+    for (const [k, v] of toolOnlyCounters.entries()) {
+        if (now - v.updatedAt > TOOL_ONLY_COUNTER_TTL_MS) {
+            toolOnlyCounters.delete(k);
+        }
+    }
+}
 function isConfiguredCfg(cfg) {
     return listAccountIds(cfg).length > 0;
 }
@@ -459,11 +501,29 @@ export const xiotboxPlugin = {
                         };
                     };
                     const sessionKey = `xiotbox:${finalCfg.DEVICE_ID}`;
+                    const senderId = payload?.from || 'xiotbox';
+                    const counterKey = toolOnlyCounterKey(finalCfg.DEVICE_ID, senderId);
+                    // Periodic cleanup of stale counters
+                    pruneToolOnlyCounters();
+                    // ── Hard-exit: user explicitly wants to leave tool/control mode ──
+                    if (isHardExitCommand(text)) {
+                        resetToolOnlyCounter(counterKey);
+                        log?.info?.(JSON.stringify({
+                            event: 'hard_exit_command',
+                            trace_id: traceId,
+                            thread_id: threadId,
+                            message_id: cmdId,
+                            sender_id: senderId,
+                            input_text: text.slice(0, 80),
+                        }));
+                        // Rewrite the user text so OpenClaw sees a normal prompt, not the raw /stop
+                        text = '用户请求退出操控模式，请恢复正常对话。';
+                    }
                     const inboundCtx = {
                         Body: text,
                         RawBody: text,
                         CommandBody: text,
-                        From: payload?.from || 'xiotbox',
+                        From: senderId,
                         To: finalCfg.DEVICE_ID,
                         SessionKey: sessionKey,
                         AccountId: accountId,
@@ -471,7 +531,7 @@ export const xiotboxPlugin = {
                         TraceId: traceId,
                         ChatType: 'direct',
                         ConversationLabel: finalCfg.DEVICE_ID,
-                        SenderId: payload?.from || 'xiotbox',
+                        SenderId: senderId,
                         CommandAuthorized: true,
                         Provider: 'xiotbox',
                         Surface: 'xiotbox',
@@ -495,17 +555,35 @@ export const xiotboxPlugin = {
                     let sawAnyDeliver = false;
                     let sawToolLikeDeliver = false;
                     let sawNonTextDeliver = false;
+                    const toolNamesSeen = [];
                     const deliver = async (outPayload, info) => {
                         const kind = info?.kind || 'block';
                         sawAnyDeliver = true;
                         const hasTool = detectToolSignals(outPayload);
-                        if (hasTool)
+                        if (hasTool) {
                             sawToolLikeDeliver = true;
+                            // Collect tool names for summary
+                            const sig = summarizeToolSignals(outPayload);
+                            if (sig) {
+                                const match = sig.match(/^tool=(.+)$/);
+                                if (match)
+                                    toolNamesSeen.push(...match[1].split(','));
+                            }
+                        }
                         const replyText = normalizeTextPayload(outPayload);
                         const keysPresent = outPayload && typeof outPayload === 'object'
                             ? Object.keys(outPayload).sort()
                             : [String(typeof outPayload)];
-                        log?.debug?.(`[XiotBox] deliver kind=${kind} text_len=${replyText.length} has_tool=${hasTool} keys=${JSON.stringify(keysPresent)} ${summarizeToolSignals(outPayload)}`);
+                        log?.debug?.(JSON.stringify({
+                            event: 'deliver',
+                            trace_id: traceId || '',
+                            message_id: cmdId,
+                            kind,
+                            text_len: replyText.length,
+                            has_tool: hasTool,
+                            keys: keysPresent,
+                            tool_names: summarizeToolSignals(outPayload),
+                        }));
                         if (!replyText) {
                             sawNonTextDeliver = true;
                             // Internal event / tool call / observation with no human text.
@@ -583,19 +661,36 @@ export const xiotboxPlugin = {
                     // Prefer finalText, then blocks (joined with newline), then lastText
                     const blocksText = blockParts.join('\n');
                     let resolvedFinalText = (finalText || blocksText || lastText || '').trim();
-                    // IMPORTANT: Never send "success" with empty text as a normal reply,
-                    // because downstream clients often render it as an empty bubble.
-                    //
-                    // If OpenClaw produced only tool/observation events with no human text,
-                    // emit a small non-empty placeholder so users don't think the bot "didn't reply".
-                    const toolOnlyPlaceholder = '（已执行操作步骤，无额外文字回复）';
+                    // Determine if this reply is tool-only (no human text produced)
+                    const toolOnlyLikely = sawToolLikeDeliver || sawNonTextDeliver;
+                    const isToolOnlyReply = !resolvedFinalText && toolOnlyLikely;
+                    const isNoReply = resolvedFinalText ? shouldSkipReply(resolvedFinalText) : false;
+                    const needsFallback = isToolOnlyReply || isNoReply || !resolvedFinalText;
+                    // ── Structured log helper ──
+                    const structuredLog = (level, event, extra) => {
+                        const entry = {
+                            event,
+                            trace_id: traceId || '',
+                            thread_id: threadId || '',
+                            message_id: cmdId,
+                            branch: needsFallback ? (isToolOnlyReply ? 'tool_only' : isNoReply ? 'no_reply' : 'empty') : 'normal',
+                            resolved_text_len: resolvedFinalText.length,
+                            tool_names: toolNamesSeen.slice(),
+                            ...extra,
+                        };
+                        log?.[level]?.(JSON.stringify(entry));
+                    };
+                    // Build a dynamic summary when only tool calls were executed (no human text).
+                    const buildToolSummary = () => {
+                        const uniq = Array.from(new Set(toolNamesSeen.map(s => s.trim()).filter(Boolean)));
+                        if (uniq.length) {
+                            return `（已执行: ${uniq.join(', ')}）`;
+                        }
+                        return '（操作已完成）';
+                    };
                     if (!resolvedFinalText) {
-                        const metaStr = dispatchMeta ? JSON.stringify(dispatchMeta) : 'null';
-                        const skipsStr = skipEvents.length ? JSON.stringify(skipEvents) : '[]';
                         // If OpenClaw queued something but we got no text, treat as failure (bug/merge issue).
                         const queuedFinal = Boolean(dispatchMeta?.queuedFinal || (dispatchMeta?.counts?.final || 0) > 0);
-                        // If we saw tool-like deliveries or non-text deliveries, it's likely tool-only.
-                        const toolOnlyLikely = sawToolLikeDeliver || sawNonTextDeliver;
                         if (queuedFinal && !toolOnlyLikely) {
                             const failPayload = {
                                 command_id: cmdId,
@@ -604,26 +699,47 @@ export const xiotboxPlugin = {
                                 error: 'empty_reply_from_openclaw',
                                 result: {},
                             };
-                            log?.warn?.(`[XiotBox] empty reply (queuedFinal=true) cmdId=${cmdId} traceId=${traceId || ''} sawDeliver=${sawAnyDeliver} toolOnly=${toolOnlyLikely} meta=${metaStr} skips=${skipsStr}`);
+                            structuredLog('warn', 'empty_reply_queued_final', {
+                                dispatch_meta: dispatchMeta,
+                                skip_events: skipEvents,
+                                saw_any_deliver: sawAnyDeliver,
+                            });
                             client.sendMessage('COMMAND_RESULT', failPayload);
                             setCached(cmdId, failPayload);
                             return;
                         }
-                        if (toolOnlyLikely) {
-                            resolvedFinalText = toolOnlyPlaceholder;
+                        resolvedFinalText = buildToolSummary();
+                        structuredLog('info', 'tool_only_summary', {
+                            dispatch_meta: dispatchMeta,
+                            saw_any_deliver: sawAnyDeliver,
+                        });
+                    }
+                    // If explicitly asked for NO_REPLY semantics, still avoid empty bubble.
+                    if (shouldSkipReply(resolvedFinalText)) {
+                        resolvedFinalText = buildToolSummary();
+                        structuredLog('info', 'no_reply_to_summary');
+                    }
+                    // ── Consecutive tool-only counter: auto-fallback after MAX_CONSECUTIVE_TOOL_ONLY ──
+                    if (needsFallback) {
+                        const consecutiveCount = incrementToolOnlyCounter(counterKey);
+                        if (consecutiveCount >= MAX_CONSECUTIVE_TOOL_ONLY) {
+                            resetToolOnlyCounter(counterKey);
+                            resolvedFinalText =
+                                buildToolSummary() +
+                                    '\n\n⚠️ 连续多次仅执行操作未产生文字回复，已自动恢复正常对话模式。如需继续操控，请重新描述您的需求。';
+                            structuredLog('warn', 'consecutive_tool_only_auto_reset', {
+                                consecutive_count: consecutiveCount,
+                            });
                         }
                         else {
-                            // No deliver at all / truly silent completion: still avoid empty bubble.
-                            // Use a tiny placeholder to keep UX consistent.
-                            resolvedFinalText = toolOnlyPlaceholder;
-                            log?.debug?.(`[XiotBox] silent/empty completion -> placeholder cmdId=${cmdId} traceId=${traceId || ''} sawDeliver=${sawAnyDeliver} meta=${metaStr} skips=${skipsStr}`);
+                            structuredLog('debug', 'consecutive_tool_only_tick', {
+                                consecutive_count: consecutiveCount,
+                            });
                         }
                     }
-                    // If explicitly asked for NO_REPLY semantics, respect it, but still avoid empty bubble:
-                    // - Here we interpret NO_REPLY as "do not show a normal chat bubble"
-                    // - However downstream may not support it; safest is to return a tiny placeholder.
-                    if (shouldSkipReply(resolvedFinalText)) {
-                        resolvedFinalText = toolOnlyPlaceholder;
+                    else {
+                        // Normal text reply — reset the counter
+                        resetToolOnlyCounter(counterKey);
                     }
                     // Final success payload
                     chunkSeq += 1;
