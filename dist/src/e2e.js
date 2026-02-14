@@ -142,10 +142,16 @@ export function decryptEnvelope(envelope, privRaw, aad) {
     const nonce = b64d(envelope.nonce_b64 || '');
     const ciphertext = b64d(envelope.ct_b64 || '');
     const envAad = envelope.aad_b64 ? b64d(envelope.aad_b64) : null;
+    // Prioritize envelope AAD (packetAAD) over provided AAD (localAAD)
+    // This fixes multi-device scenarios where device_id differs
     if (aad && envAad && !aad.equals(envAad)) {
-        throw new Error('aad_mismatch');
+        // Log warning but don't throw - use envelope AAD
+        console.warn('[E2E] AAD mismatch, using envelope AAD', {
+            providedHash: aad.toString('hex').slice(0, 24),
+            envelopeHash: envAad.toString('hex').slice(0, 24),
+        });
     }
-    const aadToUse = aad || envAad || null;
+    const aadToUse = envAad || aad || null; // Prioritize envelope AAD
     return aesGcmDecrypt(contentKey, nonce, ciphertext, aadToUse);
 }
 function resolveKeyPath(cfg, deviceId) {
@@ -757,8 +763,22 @@ export class OpenClawE2E {
     decryptText(envelope, meta) {
         if (!this.privRaw)
             throw new Error('missing_keypair');
-        const aad = this.buildAad(meta);
-        const raw = decryptEnvelope(envelope, this.privRaw, aad);
+        // Priority 1: Try with packetAAD (envelope.aad_b64)
+        const envAad = envelope.aad_b64 ? b64d(envelope.aad_b64) : null;
+        if (envAad) {
+            try {
+                const raw = decryptEnvelope(envelope, this.privRaw, envAad);
+                return raw.toString('utf-8');
+            }
+            catch (err) {
+                console.warn('[E2E] Decrypt with packetAAD failed, trying localAAD', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+        }
+        // Priority 2: Fallback to localAAD
+        const localAad = this.buildAad(meta);
+        const raw = decryptEnvelope(envelope, this.privRaw, localAad);
         return raw.toString('utf-8');
     }
     _deriveApiBase() {

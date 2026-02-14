@@ -52,10 +52,126 @@ function buildConfig(channelCfg) {
         HELLO_EXTRA: undefined,
     };
 }
+/**
+ * Robust text extraction:
+ * - supports common fields (markdown/text/body/output_text/etc.)
+ * - supports arrays: parts/content/messages
+ * - supports nested objects recursively (safe depth + cycle guard)
+ * - supports streaming/delta-like fields
+ */
 function normalizeTextPayload(payload) {
     if (typeof payload === 'string')
         return payload;
-    return payload?.markdown || payload?.text || payload?.body || '';
+    if (!payload)
+        return '';
+    const acc = [];
+    const visited = new WeakSet();
+    const MAX_DEPTH = 6;
+    const pushText = (v) => {
+        if (!v)
+            return;
+        if (typeof v === 'string') {
+            const s = v.trimEnd();
+            if (s)
+                acc.push(s);
+            return;
+        }
+        if (typeof v === 'number' || typeof v === 'boolean') {
+            acc.push(String(v));
+            return;
+        }
+        // objects handled by walk
+    };
+    const walk = (obj, depth) => {
+        if (!obj || depth > MAX_DEPTH)
+            return;
+        if (typeof obj === 'string' || typeof obj === 'number' || typeof obj === 'boolean') {
+            pushText(obj);
+            return;
+        }
+        if (Array.isArray(obj)) {
+            for (const it of obj)
+                walk(it, depth + 1);
+            return;
+        }
+        if (typeof obj !== 'object')
+            return;
+        if (visited.has(obj))
+            return;
+        visited.add(obj);
+        // 1) direct/common fields
+        const directKeys = [
+            'markdown',
+            'text',
+            'body',
+            'content_text',
+            'output_text',
+            'outputText',
+            'message',
+            'message_text',
+            'reply',
+            'answer',
+            'final',
+            'final_text',
+        ];
+        for (const k of directKeys) {
+            if (obj[k] !== undefined) {
+                const v = obj[k];
+                // sometimes message is nested object; allow recursion
+                if (typeof v === 'object' && v) {
+                    walk(v, depth + 1);
+                }
+                else {
+                    pushText(v);
+                }
+            }
+        }
+        // 2) parts/content arrays
+        if (Array.isArray(obj.parts))
+            walk(obj.parts, depth + 1);
+        if (Array.isArray(obj.content))
+            walk(obj.content, depth + 1);
+        // 3) common nested containers
+        if (obj.content && typeof obj.content === 'object')
+            walk(obj.content, depth + 1);
+        if (obj.part && typeof obj.part === 'object')
+            walk(obj.part, depth + 1);
+        // 4) streaming/delta-ish
+        // many providers use delta/content_delta/choices[].delta etc.
+        if (obj.delta !== undefined)
+            walk(obj.delta, depth + 1);
+        if (obj.content_delta !== undefined)
+            walk(obj.content_delta, depth + 1);
+        if (Array.isArray(obj.choices))
+            walk(obj.choices, depth + 1);
+        if (obj.choice && typeof obj.choice === 'object')
+            walk(obj.choice, depth + 1);
+        // 5) if this object looks like a "typed segment", try common patterns
+        // e.g. {type:'text', text:'...'} or {type:'output_text', text:{value:'...'}}
+        if (obj.type && (obj.text !== undefined || obj.value !== undefined || obj.content !== undefined)) {
+            walk(obj.text, depth + 1);
+            walk(obj.value, depth + 1);
+            // obj.content already handled above
+        }
+        // 6) last resort: try a few known subkeys that often carry text
+        const fallbackKeys = ['value', 'raw', 'display', 'caption', 'title'];
+        for (const k of fallbackKeys) {
+            if (obj[k] !== undefined) {
+                const v = obj[k];
+                if (typeof v === 'object' && v)
+                    walk(v, depth + 1);
+                else
+                    pushText(v);
+            }
+        }
+    };
+    walk(payload, 0);
+    // Join with newline to avoid "sticking" blocks together.
+    return acc
+        .map((s) => String(s))
+        .filter((s) => s.trim().length > 0)
+        .join('\n')
+        .trim();
 }
 function shouldSkipReply(text) {
     const trimmed = (text || '').trim();
@@ -91,6 +207,44 @@ function resolveAccount(cfg, accountId) {
         config: root,
         enabled: root.enabled !== false,
     };
+}
+function detectToolSignals(outPayload) {
+    if (!outPayload || typeof outPayload !== 'object')
+        return false;
+    return Boolean(outPayload.tool_calls ||
+        outPayload.toolCalls ||
+        outPayload.tool_call ||
+        outPayload.function_call ||
+        outPayload.functionCall ||
+        outPayload.action ||
+        outPayload.actions ||
+        outPayload.observation ||
+        outPayload.observations ||
+        outPayload.tool_result ||
+        outPayload.toolResult);
+}
+function summarizeToolSignals(outPayload) {
+    if (!outPayload || typeof outPayload !== 'object')
+        return '';
+    const names = [];
+    const tc = outPayload.tool_calls || outPayload.toolCalls;
+    if (Array.isArray(tc)) {
+        for (const t of tc) {
+            const name = t?.name || t?.tool || t?.tool_name || t?.function?.name;
+            if (name)
+                names.push(String(name));
+        }
+    }
+    const fc = outPayload.function_call || outPayload.functionCall;
+    if (fc?.name)
+        names.push(String(fc.name));
+    const act = outPayload.action;
+    if (typeof act === 'string')
+        names.push(act);
+    const uniq = Array.from(new Set(names.map((s) => s.trim()).filter(Boolean)));
+    if (!uniq.length)
+        return '';
+    return `tool=${uniq.join(',')}`;
 }
 export const xiotboxPlugin = {
     id: CHANNEL_ID,
@@ -246,7 +400,7 @@ export const xiotboxPlugin = {
                             enc_v: e2e.encV,
                         });
                     }
-                    catch (err) {
+                    catch (_err) {
                         const failPayload = {
                             command_id: cmdId,
                             status: 'failed',
@@ -328,8 +482,8 @@ export const xiotboxPlugin = {
                             to: finalCfg.DEVICE_ID,
                         },
                     };
-                    // OpenClaw's dispatcher returns `{ queuedFinal: boolean, counts }` and delivers actual reply payloads
-                    // asynchronously via `deliver(payload, { kind })`. Do NOT treat `queuedFinal` as reply text.
+                    // OpenClaw dispatcher returns metadata and delivers actual reply payloads
+                    // asynchronously via `deliver(payload, { kind })`.
                     let lastText = '';
                     let finalText = '';
                     const blockParts = [];
@@ -337,11 +491,27 @@ export const xiotboxPlugin = {
                     let chunkSeq = 0;
                     let dispatchMeta = null;
                     const skipEvents = [];
+                    // Signals to avoid "empty success"
+                    let sawAnyDeliver = false;
+                    let sawToolLikeDeliver = false;
+                    let sawNonTextDeliver = false;
                     const deliver = async (outPayload, info) => {
                         const kind = info?.kind || 'block';
+                        sawAnyDeliver = true;
+                        const hasTool = detectToolSignals(outPayload);
+                        if (hasTool)
+                            sawToolLikeDeliver = true;
                         const replyText = normalizeTextPayload(outPayload);
-                        if (!replyText)
+                        const keysPresent = outPayload && typeof outPayload === 'object'
+                            ? Object.keys(outPayload).sort()
+                            : [String(typeof outPayload)];
+                        log?.debug?.(`[XiotBox] deliver kind=${kind} text_len=${replyText.length} has_tool=${hasTool} keys=${JSON.stringify(keysPresent)} ${summarizeToolSignals(outPayload)}`);
+                        if (!replyText) {
+                            sawNonTextDeliver = true;
+                            // Internal event / tool call / observation with no human text.
+                            // Do not emit as chat bubble.
                             return;
+                        }
                         lastText = replyText;
                         if (kind === 'block') {
                             blockParts.push(replyText);
@@ -367,8 +537,7 @@ export const xiotboxPlugin = {
                         });
                     };
                     const fullConfig = runtime?.config?.loadConfig?.() ?? cfg;
-                    // Prefer a deterministic dispatch path that waits for all queued deliveries before finalizing.
-                    // This avoids intermittent blank replies caused by async delivery after `dispatchReply*` resolves.
+                    // Prefer deterministic dispatch path that waits for all queued deliveries before finalizing.
                     const replyApi = runtime?.channel?.reply;
                     const createDispatcher = replyApi?.createReplyDispatcherWithTyping;
                     const finalizeCtx = replyApi?.finalizeInboundContext;
@@ -411,42 +580,61 @@ export const xiotboxPlugin = {
                         // Let queued microtasks flush `deliver()` at least once before we finalize.
                         await Promise.resolve();
                     }
-                    const blocksText = blockParts.join('');
-                    const resolvedFinalText = finalText || blocksText || lastText || '';
-                    if (!shouldSkipReply(resolvedFinalText)) {
-                        const successPayload = {
-                            command_id: cmdId,
-                            status: 'success',
-                            trace_id: traceId,
-                            result: buildEncryptedResult(resolvedFinalText, chunkSeq),
-                        };
-                        client.sendMessage('COMMAND_RESULT', successPayload);
-                        setCached(cmdId, successPayload);
+                    // Prefer finalText, then blocks (joined with newline), then lastText
+                    const blocksText = blockParts.join('\n');
+                    let resolvedFinalText = (finalText || blocksText || lastText || '').trim();
+                    // IMPORTANT: Never send "success" with empty text as a normal reply,
+                    // because downstream clients often render it as an empty bubble.
+                    //
+                    // If OpenClaw produced only tool/observation events with no human text,
+                    // emit a small non-empty placeholder so users don't think the bot "didn't reply".
+                    const toolOnlyPlaceholder = '（已执行操作步骤，无额外文字回复）';
+                    if (!resolvedFinalText) {
+                        const metaStr = dispatchMeta ? JSON.stringify(dispatchMeta) : 'null';
+                        const skipsStr = skipEvents.length ? JSON.stringify(skipEvents) : '[]';
+                        // If OpenClaw queued something but we got no text, treat as failure (bug/merge issue).
+                        const queuedFinal = Boolean(dispatchMeta?.queuedFinal || (dispatchMeta?.counts?.final || 0) > 0);
+                        // If we saw tool-like deliveries or non-text deliveries, it's likely tool-only.
+                        const toolOnlyLikely = sawToolLikeDeliver || sawNonTextDeliver;
+                        if (queuedFinal && !toolOnlyLikely) {
+                            const failPayload = {
+                                command_id: cmdId,
+                                status: 'failed',
+                                trace_id: traceId,
+                                error: 'empty_reply_from_openclaw',
+                                result: {},
+                            };
+                            log?.warn?.(`[XiotBox] empty reply (queuedFinal=true) cmdId=${cmdId} traceId=${traceId || ''} sawDeliver=${sawAnyDeliver} toolOnly=${toolOnlyLikely} meta=${metaStr} skips=${skipsStr}`);
+                            client.sendMessage('COMMAND_RESULT', failPayload);
+                            setCached(cmdId, failPayload);
+                            return;
+                        }
+                        if (toolOnlyLikely) {
+                            resolvedFinalText = toolOnlyPlaceholder;
+                        }
+                        else {
+                            // No deliver at all / truly silent completion: still avoid empty bubble.
+                            // Use a tiny placeholder to keep UX consistent.
+                            resolvedFinalText = toolOnlyPlaceholder;
+                            log?.debug?.(`[XiotBox] silent/empty completion -> placeholder cmdId=${cmdId} traceId=${traceId || ''} sawDeliver=${sawAnyDeliver} meta=${metaStr} skips=${skipsStr}`);
+                        }
                     }
-                    else if (dispatchMeta?.queuedFinal || (dispatchMeta?.counts?.final || 0) > 0) {
-                        // Unexpected: OpenClaw said it queued a final reply, but we ended up with an empty/skip payload.
-                        const failPayload = {
-                            command_id: cmdId,
-                            status: 'failed',
-                            trace_id: traceId,
-                            error: 'empty_reply_from_openclaw',
-                            result: {},
-                        };
-                        log?.warn?.(`[XiotBox] empty reply cmdId=${cmdId} traceId=${traceId || ''} meta=${JSON.stringify(dispatchMeta)} skips=${JSON.stringify(skipEvents)}`);
-                        client.sendMessage('COMMAND_RESULT', failPayload);
-                        setCached(cmdId, failPayload);
+                    // If explicitly asked for NO_REPLY semantics, respect it, but still avoid empty bubble:
+                    // - Here we interpret NO_REPLY as "do not show a normal chat bubble"
+                    // - However downstream may not support it; safest is to return a tiny placeholder.
+                    if (shouldSkipReply(resolvedFinalText)) {
+                        resolvedFinalText = toolOnlyPlaceholder;
                     }
-                    else {
-                        // Still finalize to avoid hanging commands (NO_REPLY / silent cases).
-                        const emptyPayload = {
-                            command_id: cmdId,
-                            status: 'success',
-                            trace_id: traceId,
-                            result: buildEncryptedResult('', chunkSeq),
-                        };
-                        client.sendMessage('COMMAND_RESULT', emptyPayload);
-                        setCached(cmdId, emptyPayload);
-                    }
+                    // Final success payload
+                    chunkSeq += 1;
+                    const successPayload = {
+                        command_id: cmdId,
+                        status: 'success',
+                        trace_id: traceId,
+                        result: buildEncryptedResult(resolvedFinalText, chunkSeq),
+                    };
+                    client.sendMessage('COMMAND_RESULT', successPayload);
+                    setCached(cmdId, successPayload);
                 }
                 catch (err) {
                     const cmdId = payload?.command_id;
