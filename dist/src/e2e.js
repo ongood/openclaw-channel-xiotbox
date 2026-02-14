@@ -98,7 +98,7 @@ function x25519SharedSecret(priv, pub) {
     }
     return Buffer.from(x25519.getSharedSecret(priv, pub));
 }
-export function buildEnvelope(plaintext, receiverPubkey, keyId, aad) {
+export function buildEnvelope(plaintext, receiverPubkey, keyId, aad, sessionId, encVersion) {
     if (!receiverPubkey || receiverPubkey.length !== PUBKEY_LEN) {
         throw new Error('invalid_pubkey_len');
     }
@@ -120,6 +120,12 @@ export function buildEnvelope(plaintext, receiverPubkey, keyId, aad) {
         ek_b64: b64e(ekBlob),
         ct_b64: b64e(ciphertext),
     };
+    if (sessionId) {
+        envelope.session_id = sessionId;
+    }
+    if (encVersion !== undefined && encVersion !== null) {
+        envelope.enc_version = encVersion;
+    }
     if (aad && aad.length) {
         envelope.aad_b64 = b64e(aad);
     }
@@ -129,6 +135,11 @@ export function decryptEnvelope(envelope, privRaw, aad) {
     if (!envelope || envelope.magic !== E2E_MAGIC || envelope.version !== E2E_VERSION) {
         throw new Error('invalid_envelope');
     }
+    // Read enc_version and session_id for diagnostics
+    const encVersion = envelope.enc_version ?? 1;
+    const keyIdShort = (envelope.key_id || '').slice(0, 8);
+    const sessionIdShort = (envelope.session_id || 'none').slice(0, 8);
+    console.log(`[E2E] Decrypt attempt: enc_v=${encVersion} key_id=${keyIdShort} session_id=${sessionIdShort}`);
     const ekBlob = b64d(envelope.ek_b64 || '');
     if (ekBlob.length < PUBKEY_LEN + WRAP_NONCE_LEN + GCM_TAG_LEN) {
         throw new Error('invalid_ek');
@@ -756,13 +767,20 @@ export class OpenClawE2E {
         const peerRaw = peer?.publicKey ? decodePubkey(peer.publicKey) : this.ensurePeerKey();
         if (!peerRaw)
             throw new Error('missing_peer_key');
-        const aad = this.buildAad(meta);
+        // Use enc_version=2 for v2 protocol
+        const encVersion = 2;
+        const metaWithEncV = { ...meta, enc_v: encVersion };
+        const aad = this.buildAad(metaWithEncV);
         const keyId = String(peer?.keyId || this.peerKeyId || '').trim() || computeKeyId(peerRaw);
-        return buildEnvelope(Buffer.from(text || '', 'utf-8'), peerRaw, keyId || '', aad);
+        // Generate session_id
+        const sessionId = crypto.randomUUID();
+        return buildEnvelope(Buffer.from(text || '', 'utf-8'), peerRaw, keyId || '', aad, sessionId, encVersion);
     }
     decryptText(envelope, meta) {
         if (!this.privRaw)
             throw new Error('missing_keypair');
+        // Read enc_version for controlled fallback
+        const encVersion = envelope.enc_version ?? 1;
         // Priority 1: Try with packetAAD (envelope.aad_b64)
         const envAad = envelope.aad_b64 ? b64d(envelope.aad_b64) : null;
         if (envAad) {
@@ -776,10 +794,29 @@ export class OpenClawE2E {
                 });
             }
         }
-        // Priority 2: Fallback to localAAD
+        // Priority 2: Fallback to localAAD (canonical)
         const localAad = this.buildAad(meta);
-        const raw = decryptEnvelope(envelope, this.privRaw, localAad);
-        return raw.toString('utf-8');
+        try {
+            const raw = decryptEnvelope(envelope, this.privRaw, localAad);
+            return raw.toString('utf-8');
+        }
+        catch (err) {
+            // Priority 3: Legacy fallbacks (only for v0/v1)
+            if (encVersion < 2) {
+                console.warn('[E2E] Canonical localAAD failed, trying legacy fallbacks (enc_v < 2)');
+                // Try with empty AAD for v0
+                if (encVersion === 0) {
+                    try {
+                        const raw = decryptEnvelope(envelope, this.privRaw, null);
+                        return raw.toString('utf-8');
+                    }
+                    catch (legacyErr) {
+                        // Fall through to throw original error
+                    }
+                }
+            }
+            throw err;
+        }
     }
     _deriveApiBase() {
         const wssUrl = this.cfg.GATEWAY_WSS_URL;
