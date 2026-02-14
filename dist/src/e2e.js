@@ -542,6 +542,7 @@ export class OpenClawE2E {
         this.peerTrustError = '';
         this.threadId = '';
         this.encV = E2E_VERSION;
+        this.clientPeerKeys = [];
         this.cfg = cfg || {};
         this.log = log;
     }
@@ -618,6 +619,10 @@ export class OpenClawE2E {
         }
         this.threadId = result?.thread_id || '';
         this.encV = result?.enc_v || E2E_VERSION;
+        // Store client_peer_keys from server
+        if (Array.isArray(result?.client_peer_keys)) {
+            this.clientPeerKeys = result.client_peer_keys;
+        }
         return result;
     }
     helloPayload() {
@@ -739,6 +744,18 @@ export class OpenClawE2E {
         pushPeer(primary);
         if (this.peerPublicKey) {
             pushPeer({ publicKey: this.peerPublicKey, keyId: this.peerKeyId || '' });
+        }
+        // Include stored client_peer_keys from server
+        if (Array.isArray(this.clientPeerKeys)) {
+            for (const item of this.clientPeerKeys) {
+                if (!item || typeof item !== 'object')
+                    continue;
+                const pub = String(item.client_public_key || '').trim();
+                const keyId = String(item.client_key_id || '').trim();
+                if (!pub)
+                    continue;
+                pushPeer({ publicKey: pub, keyId });
+            }
         }
         const advertisedPeers = payload?.client_peer_keys || payload?.client_peers;
         if (Array.isArray(advertisedPeers)) {
