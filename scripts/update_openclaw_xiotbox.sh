@@ -18,6 +18,9 @@ else
   REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
 fi
 
+INSTALL_TARGET="$REPO"
+TMP_CLONE_DIR=""
+
 NEW_PLUGIN_ID="xiotbox"
 OLD_PLUGIN_ID="openclaw-channel-xiotbox"
 
@@ -130,6 +133,45 @@ preflight() {
 
 preflight
 
+prepare_install_target() {
+  local raw="$REPO"
+  local repo_url="$raw"
+  local repo_ref=""
+
+  if [[ "$raw" == *"#"* ]]; then
+    repo_url="${raw%%#*}"
+    repo_ref="${raw#*#}"
+  fi
+
+  if [[ "$repo_url" == http://* || "$repo_url" == https://* || "$repo_url" == git@* || "$repo_url" == ssh://* || "$repo_url" == file://* ]]; then
+    TMP_CLONE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/xiotbox-plugin.XXXXXX")"
+    if [ -n "$repo_ref" ]; then
+      if ! git clone --depth 1 --branch "$repo_ref" "$repo_url" "$TMP_CLONE_DIR"; then
+        rm -rf "$TMP_CLONE_DIR"
+        fail "git clone failed: $repo_url#$repo_ref"
+      fi
+    else
+      if ! git clone --depth 1 "$repo_url" "$TMP_CLONE_DIR"; then
+        rm -rf "$TMP_CLONE_DIR"
+        fail "git clone failed: $repo_url"
+      fi
+    fi
+    INSTALL_TARGET="$TMP_CLONE_DIR"
+    info "resolved install target=$INSTALL_TARGET"
+  else
+    INSTALL_TARGET="$raw"
+  fi
+}
+
+cleanup_install_target() {
+  if [ -n "$TMP_CLONE_DIR" ] && [ -d "$TMP_CLONE_DIR" ]; then
+    rm -rf "$TMP_CLONE_DIR"
+  fi
+}
+
+trap cleanup_install_target EXIT
+prepare_install_target
+
 if [ -f "$CFG_PATH" ]; then
   export CFG_PATH
   export BACKUP_PATH
@@ -237,7 +279,7 @@ fi
 
 rm -rf "$EXT_DIR" "$OLD_EXT_DIR"
 set +e
-openclaw plugins install "$REPO"
+openclaw plugins install "$INSTALL_TARGET"
 install_rc=$?
 set -e
 
@@ -249,10 +291,21 @@ fi
 if [ -f "$CFG_PATH" ]; then
   export CFG_PATH
   export REPO
+  export INSTALL_TARGET
   export EXT_DIR
   export PLUGINS_BACKUP_PATH
   export NEW_PLUGIN_ID
   export OLD_PLUGIN_ID
+  if [ "$install_rc" -eq 0 ]; then
+    export INSTALL_SUCCESS="1"
+  else
+    export INSTALL_SUCCESS="0"
+  fi
+  if [ -d "$EXT_DIR" ]; then
+    export PLUGIN_PRESENT="1"
+  else
+    export PLUGIN_PRESENT="0"
+  fi
   python3 - <<'PY'
 import json
 import os
@@ -312,13 +365,21 @@ if plugin_backup_path.exists():
         except OSError:
             pass
 
-if new_id not in entries:
-    if old_entry is not None:
-        entries[new_id] = normalize_entry(old_entry)
-    elif backup_entry is not None:
-        entries[new_id] = normalize_entry(backup_entry)
+install_success = os.environ.get("INSTALL_SUCCESS") == "1"
+plugin_present = os.environ.get("PLUGIN_PRESENT") == "1"
+
+if plugin_present:
+    if new_id not in entries:
+        if old_entry is not None:
+            entries[new_id] = normalize_entry(old_entry)
+        elif backup_entry is not None:
+            entries[new_id] = normalize_entry(backup_entry)
+        else:
+            entries[new_id] = {"enabled": True}
+    else:
+        entries[new_id] = normalize_entry(entries.get(new_id))
 else:
-    entries[new_id] = normalize_entry(entries.get(new_id))
+    entries.pop(new_id, None)
 
 old_install = installs.pop(old_id, None)
 new_install = installs.get(new_id)
@@ -330,13 +391,32 @@ if isinstance(old_install, dict):
 if isinstance(new_install, dict):
     merged_install.update(new_install)
 
-if old_install is not None or new_install is not None or backup_install is not None:
-    merged_install["source"] = merged_install.get("source") or "npm"
-    merged_install["spec"] = os.environ.get("REPO", merged_install.get("spec", ""))
-    merged_install["installPath"] = os.environ.get("EXT_DIR", merged_install.get("installPath", ""))
-    if not merged_install.get("installedAt"):
-        merged_install["installedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    installs[new_id] = merged_install
+def is_url_spec(value: str) -> bool:
+    v = (value or "").strip().lower()
+    return v.startswith("http://") or v.startswith("https://") or v.startswith("git@") or v.startswith("ssh://") or v.startswith("file://")
+
+if plugin_present:
+    if old_install is not None or new_install is not None or backup_install is not None:
+        source = str(merged_install.get("source") or "").strip().lower()
+        spec = str(merged_install.get("spec") or "").strip()
+        if source == "npm" and is_url_spec(spec):
+            merged_install["source"] = "path"
+            merged_install.pop("spec", None)
+
+        if not merged_install.get("source"):
+            merged_install["source"] = "path"
+
+        if merged_install.get("source") == "path" and not merged_install.get("sourcePath"):
+            merged_install["sourcePath"] = os.environ.get("INSTALL_TARGET") or os.environ.get("EXT_DIR", "")
+
+        if install_success or not merged_install.get("installPath"):
+            merged_install["installPath"] = os.environ.get("EXT_DIR", merged_install.get("installPath", ""))
+
+        if not merged_install.get("installedAt"):
+            merged_install["installedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        installs[new_id] = merged_install
+else:
+    installs.pop(new_id, None)
 
 plugins["entries"] = entries
 plugins["installs"] = installs
