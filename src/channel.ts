@@ -180,6 +180,25 @@ function shouldSkipReply(text: string): boolean {
   return false;
 }
 
+function cloneConfig<T>(value: T): T {
+  if (!value || typeof value !== 'object') return value;
+  if (typeof (globalThis as any).structuredClone === 'function') {
+    return (globalThis as any).structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function buildTextOnlyConfig(cfg: any): any {
+  const cloned = cloneConfig(cfg);
+  if (!cloned || typeof cloned !== 'object') return cfg;
+  const tools = cloned.tools && typeof cloned.tools === 'object' ? { ...cloned.tools } : {};
+  tools.allow = undefined;
+  tools.alsoAllow = undefined;
+  tools.deny = ['*'];
+  cloned.tools = tools;
+  return cloned;
+}
+
 // ── Hard-exit patterns: user explicitly wants to leave tool/control mode ──
 const HARD_EXIT_PATTERNS = [
   /^\/stop\b/i,
@@ -198,6 +217,7 @@ function isHardExitCommand(text: string): boolean {
 // ── Consecutive tool-only counter (keyed by thread+sender) ──
 const MAX_CONSECUTIVE_TOOL_ONLY = 3;
 const TOOL_ONLY_COUNTER_TTL_MS = 10 * 60 * 1000; // 10 min
+const FORCE_EXIT_TTL_MS = 10 * 60 * 1000; // 10 min
 
 interface ToolOnlyEntry {
   count: number;
@@ -205,9 +225,14 @@ interface ToolOnlyEntry {
 }
 
 const toolOnlyCounters = new Map<string, ToolOnlyEntry>();
+const forceExitCounters = new Map<string, number>();
 
 function toolOnlyCounterKey(deviceId: string, senderId: string): string {
   return `${deviceId}:${senderId}`;
+}
+
+function forceExitKey(deviceId: string): string {
+  return deviceId;
 }
 
 function incrementToolOnlyCounter(key: string): number {
@@ -231,6 +256,30 @@ function pruneToolOnlyCounters(): void {
   for (const [k, v] of toolOnlyCounters.entries()) {
     if (now - v.updatedAt > TOOL_ONLY_COUNTER_TTL_MS) {
       toolOnlyCounters.delete(k);
+    }
+  }
+}
+
+function scheduleForceExit(key: string): void {
+  forceExitCounters.set(key, Date.now() + FORCE_EXIT_TTL_MS);
+}
+
+function consumeForceExit(key: string): boolean {
+  const until = forceExitCounters.get(key);
+  if (!until) return false;
+  if (Date.now() > until) {
+    forceExitCounters.delete(key);
+    return false;
+  }
+  forceExitCounters.delete(key);
+  return true;
+}
+
+function pruneForceExitCounters(): void {
+  const now = Date.now();
+  for (const [k, until] of forceExitCounters.entries()) {
+    if (now > until) {
+      forceExitCounters.delete(k);
     }
   }
 }
@@ -535,12 +584,29 @@ export const xiotboxPlugin = {
           const sessionKey = `xiotbox:${finalCfg.DEVICE_ID}`;
           const senderId = payload?.from || 'xiotbox';
           const counterKey = toolOnlyCounterKey(finalCfg.DEVICE_ID, senderId);
+          const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID);
 
           // Periodic cleanup of stale counters
           pruneToolOnlyCounters();
+          pruneForceExitCounters();
+
+          // ── Auto-exit carry-over: enforce exit mode on next user message ──
+          const shouldForceExit = consumeForceExit(forceExitKeyValue);
+          if (shouldForceExit) {
+            resetToolOnlyCounter(counterKey);
+            log?.info?.(JSON.stringify({
+              event: 'auto_exit_control_mode',
+              trace_id: traceId,
+              thread_id: threadId,
+              message_id: cmdId,
+              sender_id: senderId,
+            }));
+            text = `用户请求退出操控模式，请停止调用任何工具，仅用文字回复。用户消息：${text}`;
+          }
 
           // ── Hard-exit: user explicitly wants to leave tool/control mode ──
-          if (isHardExitCommand(text)) {
+          const hardExitRequested = !shouldForceExit && isHardExitCommand(text);
+          if (hardExitRequested) {
             resetToolOnlyCounter(counterKey);
             log?.info?.(JSON.stringify({
               event: 'hard_exit_command',
@@ -551,8 +617,9 @@ export const xiotboxPlugin = {
               input_text: text.slice(0, 80),
             }));
             // Rewrite the user text so OpenClaw sees a normal prompt, not the raw /stop
-            text = '用户请求退出操控模式，请恢复正常对话。';
+            text = '用户请求退出操控模式，请停止调用任何工具，仅用文字回复。';
           }
+          const forceTextOnly = shouldForceExit || hardExitRequested;
 
           const inboundCtx = {
             Body: text,
@@ -660,6 +727,7 @@ export const xiotboxPlugin = {
           };
 
           const fullConfig = runtime?.config?.loadConfig?.() ?? cfg;
+          const effectiveConfig = forceTextOnly ? buildTextOnlyConfig(fullConfig) : fullConfig;
 
           // Prefer deterministic dispatch path that waits for all queued deliveries before finalizing.
           const replyApi = runtime?.channel?.reply;
@@ -686,7 +754,7 @@ export const xiotboxPlugin = {
             const finalized = finalizeCtx(inboundCtx);
             dispatchMeta = await dispatchFromConfig({
               ctx: finalized,
-              cfg: fullConfig,
+              cfg: effectiveConfig,
               dispatcher,
               replyResolver: null,
               replyOptions,
@@ -698,7 +766,7 @@ export const xiotboxPlugin = {
             // Fallback for older runtimes.
             const { queuedFinal, counts } = await dispatchReply({
               ctx: inboundCtx,
-              cfg: fullConfig,
+              cfg: effectiveConfig,
               replyResolver: null,
               dispatcherOptions: {
                 deliver,
@@ -783,6 +851,7 @@ export const xiotboxPlugin = {
             const consecutiveCount = incrementToolOnlyCounter(counterKey);
             if (consecutiveCount >= MAX_CONSECUTIVE_TOOL_ONLY) {
               resetToolOnlyCounter(counterKey);
+              scheduleForceExit(forceExitKeyValue);
               resolvedFinalText =
                 buildToolSummary() +
                 '\n\n⚠️ 连续多次仅执行操作未产生文字回复，已自动恢复正常对话模式。如需继续操控，请重新描述您的需求。';
