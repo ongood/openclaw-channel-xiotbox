@@ -17,10 +17,10 @@ Usage:
 
 Examples:
   bash scripts/install_configure_xiotbox.sh \
-    wss://socketd.odoo.games/ws/openclaw dev123 token123 https://api.xiotbox.com 1.0.39 1
+    wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN> https://api.xiotbox.com 1.0.39 1
 
   bash scripts/install_configure_xiotbox.sh \
-    wss://socketd.odoo.games/ws/openclaw dev123 token123 - \
+    wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN> - \
     https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.39 0
 
 Notes:

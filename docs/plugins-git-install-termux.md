@@ -159,6 +159,14 @@ bash scripts/install_configure_xiotbox.sh \
   1
 ```
 
+如果你在 BotDrop 里只需要“命令行升级 OpenClaw 本体”（适配 Termux/proot + Android wrapper 流程）：
+
+```bash
+bash scripts/upgrade_openclaw_for_botdrop_termux_proot.sh
+# 或指定版本
+bash scripts/upgrade_openclaw_for_botdrop_termux_proot.sh 2026.2.6
+```
+
 推荐直接使用一条命令跑完整闭环（安装 + 配置 + 启动 + 验证）：
 
 ```bash

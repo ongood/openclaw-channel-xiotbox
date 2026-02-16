@@ -5,25 +5,25 @@
       "type": "api_key",
       "provider": "huggingface",
       "model": "deepseek-ai/DeepSeek-V3.2",
-      "key": "sk-xxxxxxxxx"
+      "key": "<REDACTED_API_KEY>"
     },
     "huggingface:default": {
       "type": "api_key",
       "provider": "huggingface",
       "model": "deepseek-ai/DeepSeek-V3.2",
-      "key": "sk-xxxxxxxxx"
+      "key": "<REDACTED_API_KEY>"
     },
     "deepseek:deepseek-chat": {
       "type": "api_key",
       "provider": "deepseek",
       "model": "deepseek-chat",
-      "key": "sk-xxxxxxxxx"
+      "key": "<REDACTED_API_KEY>"
     },
     "deepseek:default": {
       "type": "api_key",
       "provider": "deepseek",
       "model": "deepseek-chat",
-      "key": "sk-xxxxxxxxx"
+      "key": "<REDACTED_API_KEY>"
     }
   },
   "lastGood": {
@@ -36,20 +36,20 @@
       "failureCounts": {
         "auth": 1
       },
-      "lastFailureAt": 1770816996122,
-      "cooldownUntil": 1770817056122
+      "lastFailureAt": 0,
+      "cooldownUntil": 0
     },
     "huggingface:default": {
       "errorCount": 0,
-      "lastFailureAt": 1770816997252,
-      "lastUsed": 1770816997295
+      "lastFailureAt": 0,
+      "lastUsed": 0
     },
     "deepseek:deepseek-chat": {
-      "lastUsed": 1770988392443,
+      "lastUsed": 0,
       "errorCount": 0
     },
     "deepseek:default": {
-      "lastUsed": 1770988114726,
+      "lastUsed": 0,
       "errorCount": 0
     }
   }

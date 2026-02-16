@@ -1,10 +1,10 @@
 {
   "meta": {
     "lastTouchedVersion": "2026.2.9",
-    "lastTouchedAt": "2026-02-13T09:30:54.700Z"
+    "lastTouchedAt": "<REDACTED_TIMESTAMP>"
   },
   "wizard": {
-    "lastRunAt": "2026-02-10T10:10:40.115Z",
+    "lastRunAt": "<REDACTED_TIMESTAMP>",
     "lastRunVersion": "2026.2.9",
     "lastRunCommand": "onboard",
     "lastRunMode": "local"
@@ -88,13 +88,13 @@
     "xiotbox": {
       "enabled": true,
       "GATEWAY_WSS_URL": "wss://socketd.odoo.games/ws/openclaw",
-      "DEVICE_ID": "xxxxxxxxx",
-      "DEVICE_TOKEN": "xxxxxxxxx",
+      "DEVICE_ID": "<REDACTED_DEVICE_ID>",
+      "DEVICE_TOKEN": "<REDACTED_DEVICE_TOKEN>",
       "API_BASE_URL": "https://api.xiotbox.com",
       "ALLOW_NEW_CLIENT_IDENTITIES": "1",
       "USE_QUERY_AUTH": false,
       "LOCAL_CONTROL_BASE_URL": "http://127.0.0.1:17777",
-      "LOCAL_CONTROL_TOKEN": "xxxxxxxxx"
+      "LOCAL_CONTROL_TOKEN": "<REDACTED_LOCAL_CONTROL_TOKEN>"
     }
   },
   "gateway": {
@@ -103,7 +103,7 @@
     "bind": "loopback",
     "auth": {
       "mode": "token",
-      "token": "xxxxxxxxx"
+      "token": "<REDACTED_GATEWAY_TOKEN>"
     },
     "tailscale": {
       "mode": "off",
@@ -134,7 +134,7 @@
         "spec": "https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.39",
         "installPath": "/data/data/app.botdrop/files/home/.openclaw/extensions/xiotbox",
         "version": "1.0.39",
-        "installedAt": "2026-02-13T09:30:53.899Z"
+        "installedAt": "<REDACTED_TIMESTAMP>"
       }
     }
   }

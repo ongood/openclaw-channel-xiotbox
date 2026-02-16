@@ -21,7 +21,7 @@
           "maxTokens": 8192
         }
       ],
-      "apiKey": "sk-xxxxxxxxx"
+      "apiKey": "<REDACTED_API_KEY>"
     }
   }
 }

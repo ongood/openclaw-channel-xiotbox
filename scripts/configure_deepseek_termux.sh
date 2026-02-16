@@ -15,8 +15,8 @@ Usage:
   bash scripts/configure_deepseek_termux.sh <API_KEY> [MODEL_OR_FULL_MODEL]
 
 Example:
-  bash scripts/configure_deepseek_termux.sh sk-xxxx deepseek-chat
-  bash scripts/configure_deepseek_termux.sh sk-xxxx openrouter/deepseek/deepseek-chat
+  bash scripts/configure_deepseek_termux.sh <API_KEY> deepseek-chat
+  bash scripts/configure_deepseek_termux.sh <API_KEY> openrouter/deepseek/deepseek-chat
 
 Environment (optional):
   OPENCLAW_CONFIG            Default: ~/.openclaw/openclaw.json

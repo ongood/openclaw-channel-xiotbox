@@ -292,6 +292,7 @@ bash scripts/update_openclaw_xiotbox.sh 1.0.40
 - 一键安装+配置+重启网关：`scripts/install_configure_xiotbox.sh`
 - 一键全流程（安装+配置+启动+验证）：`scripts/bootstrap_xiotbox_termux.sh`
 - 健康检查：`scripts/health_check_xiotbox.sh`
+- BotDrop 专用 OpenClaw 升级（命令行）：`scripts/upgrade_openclaw_for_botdrop_termux_proot.sh`
 
 示例：
 
@@ -343,6 +344,28 @@ bash scripts/bootstrap_xiotbox_termux.sh \
 - 该脚本会调用 `update_openclaw_xiotbox.sh` 完成重装与配置归一化。
 - Android 默认跳过 `openclaw doctor --fix`，避免 `Gateway service install not supported on android` 干扰。
 - Android 默认自动重启 gateway（可通过环境变量 `OPENCLAW_RESTART_GATEWAY=0` 关闭）。
+
+### BotDrop 下命令行升级 OpenClaw（专用）
+
+在部分 BotDrop/Termux/proot 环境中，`openclaw update` 可能与 Android wrapper 流程不一致。
+建议使用专用脚本：
+
+```bash
+bash scripts/upgrade_openclaw_for_botdrop_termux_proot.sh
+```
+
+或指定版本：
+
+```bash
+bash scripts/upgrade_openclaw_for_botdrop_termux_proot.sh 2026.2.6
+```
+
+该脚本会按 BotDrop 安全流程执行：
+1. 停 `GatewayMonitorService`（可选）
+2. 停 gateway
+3. `npm install -g openclaw@... --ignore-scripts --force`
+4. 重建 `openclaw` wrapper（termux-chroot + node）
+5. 启动 gateway（可选）
 
 ### BotDrop 下仅命令行配置 DeepSeek（绕开 UI 覆盖问题）
 

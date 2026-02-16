@@ -20,12 +20,12 @@ Usage:
 Examples:
   # xiotbox only: install + config + start + verify
   bash scripts/bootstrap_xiotbox_termux.sh \
-    wss://socketd.odoo.games/ws/openclaw dev123 token123
+    wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN>
 
   # xiotbox + deepseek model config
   bash scripts/bootstrap_xiotbox_termux.sh \
-    wss://socketd.odoo.games/ws/openclaw dev123 token123 \
-    https://api.xiotbox.com 1.0.39 1 sk-xxxx deepseek-chat
+    wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN> \
+    https://api.xiotbox.com 1.0.39 1 <MODEL_API_KEY> deepseek-chat
 
 Notes:
   - MODEL_API_KEY: pass '-' to skip model setup.
