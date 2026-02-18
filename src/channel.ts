@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import WSSClient from '../wss_client.js';
 import { getXiotboxRuntime } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
@@ -6,8 +9,36 @@ const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;
 const DEFAULT_STREAM_THROTTLE_MS = 500;
 const DEFAULT_ACCOUNT_ID = 'default';
+const DEFAULT_AGENT_ID = 'main';
 const DEFAULT_THREAD_ID = 'main';
 const CHANNEL_ID = 'xiotbox';
+const SESSION_STORE_CACHE_TTL_MS = 3000;
+const CONTEXT_EPOCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CONTEXT_EPOCH_CACHE_MAX = 2000;
+
+type SessionUsageSnapshot = {
+  totalTokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  contextTokens?: number;
+  totalTokensFresh?: boolean;
+  updatedAt?: number;
+};
+
+type SessionStoreCache = {
+  storePath: string;
+  mtimeMs: number;
+  loadedAt: number;
+  store: Record<string, any>;
+};
+
+type ContextEpochCacheEntry = {
+  epoch: number;
+  updatedAt: number;
+};
+
+let sessionStoreCache: SessionStoreCache | null = null;
+const contextEpochCache = new Map<string, ContextEpochCacheEntry>();
 
 function normalizeAccountId(value?: string | null): string {
   const normalized = String(value || '').trim();
@@ -43,6 +74,180 @@ function normalizeContextEpoch(value?: any): number {
 function buildSessionKey(deviceId: string, threadId: string, contextEpoch: number = 0): string {
   const base = `xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
   return contextEpoch > 0 ? `${base}:ctx${contextEpoch}` : base;
+}
+
+function hasOwn(obj: any, key: string): boolean {
+  return Boolean(obj && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key));
+}
+
+function contextEpochScopeKey(deviceId: string, threadId: string): string {
+  return `${deviceId}:${normalizeThreadId(threadId)}`;
+}
+
+function pruneContextEpochCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of contextEpochCache.entries()) {
+    if (now - entry.updatedAt > CONTEXT_EPOCH_CACHE_TTL_MS) {
+      contextEpochCache.delete(key);
+    }
+  }
+  if (contextEpochCache.size <= CONTEXT_EPOCH_CACHE_MAX) return;
+  const overflow = contextEpochCache.size - CONTEXT_EPOCH_CACHE_MAX;
+  const oldest = [...contextEpochCache.entries()].sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+  for (let i = 0; i < overflow; i += 1) {
+    const candidate = oldest[i];
+    if (!candidate) break;
+    contextEpochCache.delete(candidate[0]);
+  }
+}
+
+function resolveInboundContextEpoch(params: {
+  incoming: any;
+  deviceId: string;
+  threadId: string;
+  traceId?: string | null;
+  messageId?: string | null;
+  log?: any;
+}): { epoch: number; source: 'explicit' | 'fallback' | 'default' } {
+  const { incoming, deviceId, threadId, traceId, messageId, log } = params;
+  const scopeKey = contextEpochScopeKey(deviceId, threadId);
+  const explicitValue = incoming?.context_epoch ?? incoming?.contextEpoch;
+  const hasExplicitContextEpoch = hasOwn(incoming, 'context_epoch') || hasOwn(incoming, 'contextEpoch');
+  const now = Date.now();
+
+  if (hasExplicitContextEpoch) {
+    const epoch = normalizeContextEpoch(explicitValue);
+    contextEpochCache.set(scopeKey, { epoch, updatedAt: now });
+    pruneContextEpochCache();
+    return { epoch, source: 'explicit' };
+  }
+
+  const cached = contextEpochCache.get(scopeKey);
+  if (cached) {
+    cached.updatedAt = now;
+    contextEpochCache.set(scopeKey, cached);
+    if (cached.epoch > 0) {
+      log?.warn?.(JSON.stringify({
+        event: 'context_epoch_missing_fallback',
+        trace_id: traceId || '',
+        message_id: messageId || '',
+        device_id: deviceId,
+        thread_id: normalizeThreadId(threadId),
+        context_epoch: cached.epoch,
+      }));
+    }
+    return { epoch: cached.epoch, source: 'fallback' };
+  }
+
+  return { epoch: 0, source: 'default' };
+}
+
+function normalizePositiveInt(value: any): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const rounded = Math.floor(parsed);
+  return rounded >= 0 ? rounded : undefined;
+}
+
+function resolveHomeDir(): string {
+  const explicit = String(process.env.OPENCLAW_HOME || '').trim();
+  const fallback = String(process.env.HOME || os.homedir() || process.cwd()).trim() || process.cwd();
+  if (!explicit) return path.resolve(fallback);
+  if (explicit === '~') return path.resolve(fallback);
+  if (explicit.startsWith('~/') || explicit.startsWith('~\\')) {
+    return path.resolve(path.join(fallback, explicit.slice(2)));
+  }
+  return path.resolve(explicit);
+}
+
+function expandUserPath(rawPath: string, homeDir: string): string {
+  const normalized = String(rawPath || '').trim();
+  if (!normalized) return normalized;
+  if (normalized === '~') return homeDir;
+  if (normalized.startsWith('~/') || normalized.startsWith('~\\')) {
+    return path.join(homeDir, normalized.slice(2));
+  }
+  return normalized;
+}
+
+function resolveSessionStorePath(cfg: any): string {
+  const homeDir = resolveHomeDir();
+  const rawStore = String(cfg?.session?.store || '').trim();
+  if (rawStore) {
+    const withAgent = rawStore.includes('{agentId}')
+      ? rawStore.split('{agentId}').join(DEFAULT_AGENT_ID)
+      : rawStore;
+    return path.resolve(expandUserPath(withAgent, homeDir));
+  }
+
+  const stateOverride = String(
+    process.env.OPENCLAW_STATE_DIR || process.env.CLAWDBOT_STATE_DIR || '',
+  ).trim();
+  const stateDir = stateOverride
+    ? path.resolve(expandUserPath(stateOverride, homeDir))
+    : path.resolve(path.join(homeDir, '.openclaw'));
+  return path.resolve(stateDir, 'agents', DEFAULT_AGENT_ID, 'sessions', 'sessions.json');
+}
+
+function loadSessionStore(storePath: string): Record<string, any> {
+  try {
+    const stat = fs.statSync(storePath);
+    const mtimeMs = stat.mtimeMs || 0;
+    const now = Date.now();
+    if (
+      sessionStoreCache &&
+      sessionStoreCache.storePath === storePath &&
+      sessionStoreCache.mtimeMs === mtimeMs &&
+      now - sessionStoreCache.loadedAt < SESSION_STORE_CACHE_TTL_MS
+    ) {
+      return sessionStoreCache.store;
+    }
+
+    const raw = fs.readFileSync(storePath, 'utf-8');
+    const parsed = raw ? JSON.parse(raw) : {};
+    const store =
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, any>)
+        : {};
+    sessionStoreCache = {
+      storePath,
+      mtimeMs,
+      loadedAt: now,
+      store,
+    };
+    return store;
+  } catch {
+    return {};
+  }
+}
+
+function resolveSessionUsageSnapshot(cfg: any, sessionKey: string): SessionUsageSnapshot | null {
+  const normalizedSessionKey = String(sessionKey || '').trim();
+  if (!normalizedSessionKey) return null;
+  const storePath = resolveSessionStorePath(cfg);
+  const store = loadSessionStore(storePath);
+  const entry =
+    store[normalizedSessionKey] ||
+    store[normalizedSessionKey.toLowerCase()] ||
+    store[normalizedSessionKey.toUpperCase()] ||
+    null;
+  if (!entry || typeof entry !== 'object') return null;
+
+  const inputTokens = normalizePositiveInt(entry.inputTokens);
+  const outputTokens = normalizePositiveInt(entry.outputTokens);
+  const explicitTotal = normalizePositiveInt(entry.totalTokens);
+  const totalTokens =
+    explicitTotal ?? ((inputTokens ?? 0) + (outputTokens ?? 0) > 0 ? (inputTokens ?? 0) + (outputTokens ?? 0) : undefined);
+  if (totalTokens == null) return null;
+
+  return {
+    totalTokens,
+    inputTokens,
+    outputTokens,
+    contextTokens: normalizePositiveInt(entry.contextTokens),
+    totalTokensFresh: entry.totalTokensFresh === true,
+    updatedAt: normalizePositiveInt(entry.updatedAt),
+  };
 }
 
 function getChannelConfig(cfg: any) {
@@ -245,12 +450,19 @@ interface ToolOnlyEntry {
 const toolOnlyCounters = new Map<string, ToolOnlyEntry>();
 const forceExitCounters = new Map<string, number>();
 
-function toolOnlyCounterKey(deviceId: string, threadId: string, senderId: string): string {
-  return `${deviceId}:${normalizeThreadId(threadId)}:${senderId}`;
+function toolOnlyCounterKey(
+  deviceId: string,
+  threadId: string,
+  senderId: string,
+  contextEpoch: number = 0,
+): string {
+  const epoch = normalizeContextEpoch(contextEpoch);
+  return `${deviceId}:${normalizeThreadId(threadId)}:ctx${epoch}:${senderId}`;
 }
 
-function forceExitKey(deviceId: string, threadId: string): string {
-  return `${deviceId}:${normalizeThreadId(threadId)}`;
+function forceExitKey(deviceId: string, threadId: string, contextEpoch: number = 0): string {
+  const epoch = normalizeContextEpoch(contextEpoch);
+  return `${deviceId}:${normalizeThreadId(threadId)}:ctx${epoch}`;
 }
 
 function incrementToolOnlyCounter(key: string): number {
@@ -523,6 +735,15 @@ export const xiotboxPlugin = {
 
           const contentType = incoming?.content_type || incoming?.contentType || 'text/markdown';
           const threadId = normalizeThreadId(incoming?.thread_id || e2e.threadId);
+          const contextEpochResolution = resolveInboundContextEpoch({
+            incoming,
+            deviceId: finalCfg.DEVICE_ID,
+            threadId,
+            traceId,
+            messageId: cmdId,
+            log,
+          });
+          const contextEpoch = contextEpochResolution.epoch;
           let text = '';
           try {
             text = e2e.decryptText(env, {
@@ -561,7 +782,11 @@ export const xiotboxPlugin = {
             return;
           }
 
-          const buildEncryptedResult = (replyText: string, seq: number) => {
+          const buildEncryptedResult = (
+            replyText: string,
+            seq: number,
+            sessionUsage?: SessionUsageSnapshot | null,
+          ) => {
             const e2eMulti: Record<string, any> = {};
             let primaryEnv: any = null;
             let primaryKeyId = '';
@@ -589,7 +814,7 @@ export const xiotboxPlugin = {
               }
               e2eMulti[envKeyId || `peer_${Object.keys(e2eMulti).length}`] = envOut;
             }
-            return {
+            const result: Record<string, any> = {
               e2e: primaryEnv,
               e2e_multi: e2eMulti,
               result_key_id: primaryKeyId,
@@ -597,12 +822,29 @@ export const xiotboxPlugin = {
               content_type: contentType,
               chunk_seq: seq,
             };
+            if (sessionUsage) {
+              result.session_usage = {
+                total_tokens: sessionUsage.totalTokens,
+                input_tokens: sessionUsage.inputTokens,
+                output_tokens: sessionUsage.outputTokens,
+                context_tokens: sessionUsage.contextTokens,
+                total_tokens_fresh: sessionUsage.totalTokensFresh,
+                updated_at: sessionUsage.updatedAt,
+              };
+              result.session_total_tokens = sessionUsage.totalTokens;
+            }
+            return result;
           };
 
-          const sessionKey = buildSessionKey(finalCfg.DEVICE_ID, threadId);
+          const sessionKey = buildSessionKey(finalCfg.DEVICE_ID, threadId, contextEpoch);
           const senderId = payload?.from || 'xiotbox';
-          const counterKey = toolOnlyCounterKey(finalCfg.DEVICE_ID, threadId, senderId);
-          const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID, threadId);
+          const counterKey = toolOnlyCounterKey(
+            finalCfg.DEVICE_ID,
+            threadId,
+            senderId,
+            contextEpoch,
+          );
+          const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID, threadId, contextEpoch);
 
           log?.debug?.(JSON.stringify({
             event: 'session_scope',
@@ -610,6 +852,8 @@ export const xiotboxPlugin = {
             message_id: cmdId,
             device_id: finalCfg.DEVICE_ID,
             thread_id: threadId,
+            context_epoch: contextEpoch,
+            context_epoch_source: contextEpochResolution.source,
             session_key: sessionKey,
           }));
 
@@ -670,6 +914,7 @@ export const xiotboxPlugin = {
               channel: 'xiotbox',
               to: finalCfg.DEVICE_ID,
               threadId,
+              contextEpoch,
             },
           };
 
@@ -821,6 +1066,7 @@ export const xiotboxPlugin = {
               event,
               trace_id: traceId || '',
               thread_id: threadId || '',
+              context_epoch: contextEpoch,
               session_key: sessionKey,
               message_id: cmdId,
               branch: needsFallback ? (isToolOnlyReply ? 'tool_only' : isNoReply ? 'no_reply' : 'empty') : 'normal',
@@ -898,12 +1144,21 @@ export const xiotboxPlugin = {
           }
 
           // Final success payload
+          const sessionUsageSnapshot = resolveSessionUsageSnapshot(fullConfig, sessionKey);
+          if (sessionUsageSnapshot) {
+            structuredLog('debug', 'session_usage_snapshot', {
+              session_total_tokens: sessionUsageSnapshot.totalTokens,
+              session_input_tokens: sessionUsageSnapshot.inputTokens,
+              session_output_tokens: sessionUsageSnapshot.outputTokens,
+            });
+          }
+
           chunkSeq += 1;
           const successPayload = {
             command_id: cmdId,
             status: 'success',
             trace_id: traceId,
-            result: buildEncryptedResult(resolvedFinalText, chunkSeq),
+            result: buildEncryptedResult(resolvedFinalText, chunkSeq, sessionUsageSnapshot),
           };
           client.sendMessage('COMMAND_RESULT', successPayload);
           setCached(cmdId, successPayload);
