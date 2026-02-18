@@ -1,61 +1,62 @@
 {
-    "name": "xiotbox",
-    "version": "1.0.68",
-    "description": "OpenClaw plugin for XiotBox connectivity via WebSocket",
-    "type": "module",
-    "main": "dist/index.js",
-    "keywords": [
-        "openclaw-plugin",
-        "xiotbox",
-        "channel"
+  "name": "xiotbox",
+  "version": "1.0.68",
+  "description": "OpenClaw plugin for XiotBox connectivity via WebSocket",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "openclaw-plugin",
+    "xiotbox",
+    "channel"
+  ],
+  "author": "OpenClaw",
+  "license": "MIT",
+  "scripts": {
+    "start": "node bridge.js",
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "prepack": "npm run build",
+    "check:env": "node scripts/check_no_env_outside_runtime_config.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.4.0",
+    "ws": "^8.13.0",
+    "dotenv": "^16.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    ".env.example",
+    "wss_client.js",
+    "bridge.js",
+    "config.js",
+    "executor.js"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
     ],
-    "author": "OpenClaw",
-    "license": "MIT",
-    "scripts": {
-        "start": "node bridge.js",
-        "build": "tsc -p tsconfig.json",
-        "clean": "rm -rf dist",
-        "prepack": "npm run build",
-        "check:env": "node scripts/check_no_env_outside_runtime_config.mjs"
-    },
-    "dependencies": {
-        "@noble/curves": "^1.4.0",
-        "ws": "^8.13.0",
-        "dotenv": "^16.0.3"
-    },
-    "devDependencies": {
-        "@types/node": "^22.0.0",
-        "typescript": "^5.8.0"
-    },
-    "files": [
-        "dist",
-        "openclaw.plugin.json",
-        "README.md",
-        ".env.example",
-        "wss_client.js",
-        "bridge.js",
-        "config.js",
-        "executor.js"
+    "channels": [
+      "xiotbox"
     ],
-    "openclaw": {
-        "extensions": [
-            "./dist/index.js"
-        ],
-        "channels": [
-            "xiotbox"
-        ],
-        "installDependencies": true,
-        "install": {
-            "npmSpec": "xiotbox",
-            "localPath": "extensions/xiotbox",
-            "defaultChoice": "local"
-        },
-        "channel": {
-            "id": "xiotbox",
-            "label": "XiotBox",
-            "selectionLabel": "XiotBox Gateway",
-            "blurb": "Connects to XiotBox Gateway via WebSocket Secure (WSS) protocol.",
-            "order": 100
-        }
+    "installDependencies": true,
+    "install": {
+      "npmSpec": "xiotbox",
+      "localPath": "extensions/xiotbox",
+      "defaultChoice": "local"
+    },
+    "channel": {
+      "id": "xiotbox",
+      "label": "XiotBox",
+      "selectionLabel": "XiotBox Gateway",
+      "blurb": "Connects to XiotBox Gateway via WebSocket Secure (WSS) protocol.",
+      "order": 100
     }
+  }
 }
