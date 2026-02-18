@@ -37,6 +37,21 @@ type ContextEpochCacheEntry = {
   updatedAt: number;
 };
 
+type InboundMediaEntry = {
+  path?: string;
+  url?: string;
+  type?: string;
+};
+
+type InboundMediaContextFields = {
+  MediaPath?: string;
+  MediaUrl?: string;
+  MediaType?: string;
+  MediaPaths?: string[];
+  MediaUrls?: string[];
+  MediaTypes?: string[];
+};
+
 let sessionStoreCache: SessionStoreCache | null = null;
 const contextEpochCache = new Map<string, ContextEpochCacheEntry>();
 
@@ -401,6 +416,209 @@ function shouldSkipReply(text: string): boolean {
   if (trimmed === 'NO_REPLY') return true;
   if (trimmed.endsWith('NO_REPLY')) return true;
   return false;
+}
+
+function normalizeStringValue(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function readStringField(record: any, keys: string[]): string | undefined {
+  if (!record || typeof record !== 'object') return undefined;
+  for (const key of keys) {
+    const value = normalizeStringValue(record?.[key]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function toUnknownArray(value: any): any[] {
+  if (Array.isArray(value)) return value;
+  if (value == null) return [];
+  return [value];
+}
+
+function normalizeMediaEntry(entry: InboundMediaEntry | null | undefined): InboundMediaEntry | undefined {
+  if (!entry) return undefined;
+  const path = normalizeStringValue(entry.path);
+  const url = normalizeStringValue(entry.url);
+  const type = normalizeStringValue(entry.type);
+  const normalizedPath = path || url;
+  const normalizedUrl = url || path;
+  if (!normalizedPath && !normalizedUrl) return undefined;
+  return {
+    path: normalizedPath,
+    url: normalizedUrl,
+    type,
+  };
+}
+
+function parseMediaValue(item: any): InboundMediaEntry | undefined {
+  if (item == null) return undefined;
+  if (typeof item === 'string') {
+    return normalizeMediaEntry({ path: item, url: item });
+  }
+  if (typeof item !== 'object' || Array.isArray(item)) return undefined;
+
+  const path =
+    readStringField(item, [
+      'path',
+      'local_path',
+      'localPath',
+      'file_path',
+      'filePath',
+      'media_path',
+      'mediaPath',
+      'absolute_path',
+      'absolutePath',
+      'staged_path',
+      'stagedPath',
+    ]) || readStringField(item, ['src', 'uri', 'href', 'value']);
+  const url = readStringField(item, [
+    'url',
+    'media_url',
+    'mediaUrl',
+    'download_url',
+    'downloadUrl',
+    'file_url',
+    'fileUrl',
+    'remote_url',
+    'remoteUrl',
+  ]);
+  const type = readStringField(item, [
+    'mime_type',
+    'mimeType',
+    'content_type',
+    'contentType',
+    'media_type',
+    'mediaType',
+    'type',
+  ]);
+
+  return normalizeMediaEntry({ path, url, type });
+}
+
+function collectExplicitMediaEntries(incoming: any): InboundMediaEntry[] {
+  const paths = toUnknownArray(incoming?.media_paths ?? incoming?.mediaPaths).map((value) =>
+    normalizeStringValue(value),
+  );
+  const urls = toUnknownArray(incoming?.media_urls ?? incoming?.mediaUrls).map((value) =>
+    normalizeStringValue(value),
+  );
+  const types = toUnknownArray(incoming?.media_types ?? incoming?.mediaTypes).map((value) =>
+    normalizeStringValue(value),
+  );
+
+  const entries: InboundMediaEntry[] = [];
+  const count = Math.max(paths.length, urls.length, types.length);
+  for (let index = 0; index < count; index += 1) {
+    const entry = normalizeMediaEntry({
+      path: paths[index],
+      url: urls[index],
+      type: types[index],
+    });
+    if (entry) entries.push(entry);
+  }
+
+  const single = normalizeMediaEntry({
+    path: readStringField(incoming, ['media_path', 'mediaPath']),
+    url: readStringField(incoming, ['media_url', 'mediaUrl']),
+    type: readStringField(incoming, ['media_type', 'mediaType']),
+  });
+  if (single) entries.push(single);
+
+  return entries;
+}
+
+function collectStructuredMediaEntries(incoming: any): InboundMediaEntry[] {
+  const collected: InboundMediaEntry[] = [];
+  const fromLists = [
+    incoming?.attachments,
+    incoming?.files,
+    incoming?.media,
+    incoming?.media_items,
+    incoming?.mediaItems,
+    incoming?.content?.attachments,
+    incoming?.content?.files,
+    incoming?.content?.media,
+    incoming?.content?.media_items,
+    incoming?.content?.mediaItems,
+  ];
+  for (const list of fromLists) {
+    for (const item of toUnknownArray(list)) {
+      const entry = parseMediaValue(item);
+      if (entry) collected.push(entry);
+    }
+  }
+
+  const singular = [
+    incoming?.attachment,
+    incoming?.file,
+    incoming?.image,
+    incoming?.voice,
+    incoming?.audio,
+    incoming?.content?.attachment,
+    incoming?.content?.file,
+    incoming?.content?.image,
+    incoming?.content?.voice,
+    incoming?.content?.audio,
+  ];
+  for (const item of singular) {
+    const entry = parseMediaValue(item);
+    if (entry) collected.push(entry);
+  }
+
+  return collected;
+}
+
+function mergeMediaEntries(entries: InboundMediaEntry[]): InboundMediaEntry[] {
+  const merged: InboundMediaEntry[] = [];
+  const indexByKey = new Map<string, number>();
+
+  for (const rawEntry of entries) {
+    const entry = normalizeMediaEntry(rawEntry);
+    if (!entry) continue;
+    const key = `${entry.path || ''}|${entry.url || ''}`;
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex == null) {
+      indexByKey.set(key, merged.length);
+      merged.push(entry);
+      continue;
+    }
+    if (!merged[existingIndex]?.type && entry.type) {
+      merged[existingIndex].type = entry.type;
+    }
+  }
+
+  return merged;
+}
+
+export function buildInboundMediaContext(incoming: any): InboundMediaContextFields {
+  const entries = mergeMediaEntries([
+    ...collectExplicitMediaEntries(incoming),
+    ...collectStructuredMediaEntries(incoming),
+  ]);
+  if (!entries.length) return {};
+
+  const mediaPaths = entries.map((entry) => entry.path || '').filter(Boolean);
+  if (!mediaPaths.length) return {};
+  const mediaUrls = entries.map((entry) => entry.url || entry.path || '').filter(Boolean);
+  const mediaTypes = entries.map((entry) => entry.type || '');
+
+  const result: InboundMediaContextFields = {
+    MediaPath: mediaPaths[0],
+    MediaUrl: mediaUrls[0] || mediaPaths[0],
+    MediaPaths: mediaPaths,
+    MediaUrls: mediaUrls.length === mediaPaths.length ? mediaUrls : mediaPaths,
+  };
+  if (mediaTypes.some(Boolean)) {
+    result.MediaTypes = mediaTypes;
+    if (mediaTypes[0]) {
+      result.MediaType = mediaTypes[0];
+    }
+  }
+  return result;
 }
 
 function cloneConfig<T>(value: T): T {
@@ -891,6 +1109,16 @@ export const xiotboxPlugin = {
             text = '用户请求退出操控模式，请停止调用任何工具，仅用文字回复。';
           }
           const forceTextOnly = shouldForceExit || hardExitRequested;
+          const inboundMediaCtx = buildInboundMediaContext(incoming);
+          if (inboundMediaCtx.MediaPaths?.length) {
+            log?.debug?.(JSON.stringify({
+              event: 'inbound_media_mapped',
+              trace_id: traceId || '',
+              message_id: cmdId,
+              media_count: inboundMediaCtx.MediaPaths.length,
+              media_types: inboundMediaCtx.MediaTypes || [],
+            }));
+          }
 
           const inboundCtx = {
             Body: text,
@@ -910,6 +1138,7 @@ export const xiotboxPlugin = {
             Surface: 'xiotbox',
             OriginatingChannel: 'xiotbox',
             OriginatingTo: finalCfg.DEVICE_ID,
+            ...inboundMediaCtx,
             DeliveryContext: {
               channel: 'xiotbox',
               to: finalCfg.DEVICE_ID,
