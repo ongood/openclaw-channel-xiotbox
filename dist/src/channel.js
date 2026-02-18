@@ -5,6 +5,7 @@ const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;
 const DEFAULT_STREAM_THROTTLE_MS = 500;
 const DEFAULT_ACCOUNT_ID = 'default';
+const DEFAULT_THREAD_ID = 'main';
 const CHANNEL_ID = 'xiotbox';
 function normalizeAccountId(value) {
     const normalized = String(value || '').trim();
@@ -23,6 +24,13 @@ function normalizeStrList(value, fallback) {
         .map((p) => p.trim())
         .filter(Boolean);
     return parts.length ? parts : fallback;
+}
+function normalizeThreadId(value) {
+    const normalized = String(value || '').trim();
+    return normalized || DEFAULT_THREAD_ID;
+}
+function buildSessionKey(deviceId, threadId) {
+    return `xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
 }
 function getChannelConfig(cfg) {
     return cfg?.channels?.[CHANNEL_ID] || {};
@@ -221,11 +229,11 @@ const TOOL_ONLY_COUNTER_TTL_MS = 10 * 60 * 1000; // 10 min
 const FORCE_EXIT_TTL_MS = 10 * 60 * 1000; // 10 min
 const toolOnlyCounters = new Map();
 const forceExitCounters = new Map();
-function toolOnlyCounterKey(deviceId, senderId) {
-    return `${deviceId}:${senderId}`;
+function toolOnlyCounterKey(deviceId, threadId, senderId) {
+    return `${deviceId}:${normalizeThreadId(threadId)}:${senderId}`;
 }
-function forceExitKey(deviceId) {
-    return deviceId;
+function forceExitKey(deviceId, threadId) {
+    return `${deviceId}:${normalizeThreadId(threadId)}`;
 }
 function incrementToolOnlyCounter(key) {
     const now = Date.now();
@@ -346,7 +354,7 @@ export const xiotboxPlugin = {
     capabilities: {
         chatTypes: ['direct'],
         reactions: false,
-        threads: false,
+        threads: true,
         media: false,
         nativeCommands: false,
         blockStreaming: false,
@@ -394,7 +402,7 @@ export const xiotboxPlugin = {
             }
             finalCfg.HELLO_EXTRA = {
                 e2e: e2e.helloPayload(),
-                thread_id: e2e.threadId || undefined,
+                thread_id: normalizeThreadId(e2e.threadId),
             };
             // Ensure the very first HELLO after connect carries E2E identity claim.
             // WSSClient captures HELLO_EXTRA during construction; update it explicitly.
@@ -475,7 +483,7 @@ export const xiotboxPlugin = {
                         return;
                     }
                     const contentType = incoming?.content_type || incoming?.contentType || 'text/markdown';
-                    const threadId = incoming?.thread_id || e2e.threadId || '';
+                    const threadId = normalizeThreadId(incoming?.thread_id || e2e.threadId);
                     let text = '';
                     try {
                         text = e2e.decryptText(env, {
@@ -546,10 +554,18 @@ export const xiotboxPlugin = {
                             chunk_seq: seq,
                         };
                     };
-                    const sessionKey = `xiotbox:${finalCfg.DEVICE_ID}`;
+                    const sessionKey = buildSessionKey(finalCfg.DEVICE_ID, threadId);
                     const senderId = payload?.from || 'xiotbox';
-                    const counterKey = toolOnlyCounterKey(finalCfg.DEVICE_ID, senderId);
-                    const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID);
+                    const counterKey = toolOnlyCounterKey(finalCfg.DEVICE_ID, threadId, senderId);
+                    const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID, threadId);
+                    log?.debug?.(JSON.stringify({
+                        event: 'session_scope',
+                        trace_id: traceId || '',
+                        message_id: cmdId,
+                        device_id: finalCfg.DEVICE_ID,
+                        thread_id: threadId,
+                        session_key: sessionKey,
+                    }));
                     // Periodic cleanup of stale counters
                     pruneToolOnlyCounters();
                     pruneForceExitCounters();
@@ -593,7 +609,7 @@ export const xiotboxPlugin = {
                         MessageSid: cmdId,
                         TraceId: traceId,
                         ChatType: 'direct',
-                        ConversationLabel: finalCfg.DEVICE_ID,
+                        ConversationLabel: `${finalCfg.DEVICE_ID}:${threadId}`,
                         SenderId: senderId,
                         CommandAuthorized: true,
                         Provider: 'xiotbox',
@@ -603,6 +619,7 @@ export const xiotboxPlugin = {
                         DeliveryContext: {
                             channel: 'xiotbox',
                             to: finalCfg.DEVICE_ID,
+                            threadId,
                         },
                     };
                     // OpenClaw dispatcher returns metadata and delivers actual reply payloads
@@ -736,6 +753,7 @@ export const xiotboxPlugin = {
                             event,
                             trace_id: traceId || '',
                             thread_id: threadId || '',
+                            session_key: sessionKey,
                             message_id: cmdId,
                             branch: needsFallback ? (isToolOnlyReply ? 'tool_only' : isNoReply ? 'no_reply' : 'empty') : 'normal',
                             resolved_text_len: resolvedFinalText.length,

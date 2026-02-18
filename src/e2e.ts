@@ -10,6 +10,7 @@ const E2E_MAGIC = 'OGE2E1';
 const E2E_VERSION = 1;
 const E2E_ALG = 'AES-256-GCM';
 const E2E_KEY_ALG = 'x25519';
+const DEFAULT_THREAD_ID = 'main';
 const HKDF_INFO = Buffer.from('OGE2E1-wrap', 'utf-8');
 
 const PUBKEY_LEN = 32;
@@ -51,6 +52,11 @@ function decodePubkey(pubkey: string): Buffer | null {
   } catch (_err) {
     return null;
   }
+}
+
+function normalizeThreadId(value?: string | null): string {
+  const normalized = String(value || '').trim();
+  return normalized || DEFAULT_THREAD_ID;
 }
 
 function computeKeyId(pubRaw: Buffer): string {
@@ -589,7 +595,7 @@ export class OpenClawE2E {
   peerPublicKey: string = '';
   peerKeyId: string = '';
   peerTrustError: string = '';
-  threadId: string = '';
+  threadId: string = DEFAULT_THREAD_ID;
   encV: number = E2E_VERSION;
   clientPeerKeys: Array<{ client_key_id: string; client_public_key: string }> = [];
 
@@ -666,7 +672,7 @@ export class OpenClawE2E {
       this.peerKeyId = '';
       this.peerTrustError = 'e2e_peer_missing';
     }
-    this.threadId = result?.thread_id || '';
+    this.threadId = normalizeThreadId(result?.thread_id);
     this.encV = result?.enc_v || E2E_VERSION;
     // Store client_peer_keys from server
     if (Array.isArray(result?.client_peer_keys)) {
@@ -725,7 +731,7 @@ export class OpenClawE2E {
       `v=${encV}`,
       `dir=${meta.direction || ''}`,
       `device=${meta.device_id || ''}`,
-      `thread=${meta.thread_id || ''}`,
+      `thread=${normalizeThreadId(meta.thread_id || this.threadId)}`,
       `cmd=${meta.command_id || ''}`,
       `type=${meta.content_type || ''}`,
       `seq=${meta.chunk_seq || 0}`,
