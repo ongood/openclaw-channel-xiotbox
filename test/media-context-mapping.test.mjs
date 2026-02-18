@@ -80,6 +80,18 @@ test('reads nested content media payloads', () => {
   assert.deepEqual(ctx.MediaTypes, ['text/plain', 'audio/wav']);
 });
 
+test('prefers top-level media over nested content media to avoid stale bleed', () => {
+  const ctx = buildInboundMediaContext({
+    attachments: [{ path: '/tmp/current.png', mime_type: 'image/png' }],
+    content: {
+      attachments: [{ path: '/tmp/stale.jpg', mime_type: 'image/jpeg' }],
+    },
+  });
+
+  assert.deepEqual(ctx.MediaPaths, ['/tmp/current.png']);
+  assert.deepEqual(ctx.MediaTypes, ['image/png']);
+});
+
 test('supports primitive string media values', () => {
   const ctx = buildInboundMediaContext({
     files: ['/tmp/notes.txt', 'https://example.com/code.py'],
@@ -96,6 +108,19 @@ test('returns empty mapping when no usable media fields are present', () => {
   });
 
   assert.deepEqual(ctx, {});
+});
+
+test('does not stage generic b64 blobs without media markers', () => {
+  const payload = {
+    attachments: [
+      {
+        b64: Buffer.from('not-media').toString('base64'),
+      },
+    ],
+  };
+  const stagedCount = stageInlineMediaPayload(payload, {});
+  assert.equal(stagedCount, 0);
+  assert.equal(payload.attachments[0]?.path, undefined);
 });
 
 test('stages inline data_b64 media and maps staged path', () => {

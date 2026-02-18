@@ -454,6 +454,71 @@ function normalizeMediaEntry(entry: InboundMediaEntry | null | undefined): Inbou
   };
 }
 
+const MEDIA_PAYLOAD_KEYS = [
+  'attachments',
+  'files',
+  'media',
+  'media_items',
+  'mediaItems',
+  'attachment',
+  'file',
+  'image',
+  'voice',
+  'audio',
+  'media_paths',
+  'mediaPaths',
+  'media_urls',
+  'mediaUrls',
+  'media_types',
+  'mediaTypes',
+  'media_path',
+  'mediaPath',
+  'media_url',
+  'mediaUrl',
+  'media_type',
+  'mediaType',
+];
+
+function hasUsableMediaValue(value: any): boolean {
+  if (value == null) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'string') return value.trim().length > 0;
+  return true;
+}
+
+function hasMediaPayloadFields(container: any): boolean {
+  if (!container || typeof container !== 'object' || Array.isArray(container)) return false;
+  for (const key of MEDIA_PAYLOAD_KEYS) {
+    if (!hasOwn(container, key)) continue;
+    if (hasUsableMediaValue(container[key])) return true;
+  }
+  return false;
+}
+
+function resolveMediaCarrier(incoming: any): any {
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return incoming;
+  if (hasMediaPayloadFields(incoming)) return incoming;
+  const nested = incoming?.content;
+  if (hasMediaPayloadFields(nested)) return nested;
+  return incoming;
+}
+
+function hasInlineMediaMarker(item: any): boolean {
+  return (
+    hasOwn(item, 'file_name') ||
+    hasOwn(item, 'fileName') ||
+    hasOwn(item, 'name') ||
+    hasOwn(item, 'mime_type') ||
+    hasOwn(item, 'mimeType') ||
+    hasOwn(item, 'content_type') ||
+    hasOwn(item, 'contentType') ||
+    hasOwn(item, 'media_type') ||
+    hasOwn(item, 'mediaType') ||
+    hasOwn(item, 'size_bytes') ||
+    hasOwn(item, 'sizeBytes')
+  );
+}
+
 function extensionFromMime(mimeType?: string): string {
   const mime = normalizeStringValue(mimeType)?.toLowerCase() || '';
   switch (mime) {
@@ -491,16 +556,19 @@ function extensionFromMime(mimeType?: string): string {
 }
 
 function readInlineMediaB64(item: any): string | undefined {
-  const raw = readStringField(item, [
+  const strict = readStringField(item, [
     'data_b64',
     'dataB64',
     'bytes_b64',
     'bytesB64',
     'file_b64',
     'fileB64',
-    'base64',
-    'b64',
   ]);
+  const raw = strict || (() => {
+    const generic = readStringField(item, ['base64', 'b64']);
+    if (!generic) return undefined;
+    return hasInlineMediaMarker(item) ? generic : undefined;
+  })();
   if (!raw) return undefined;
   const dataUrlPrefix = /^data:[^;]+;base64,/i;
   if (dataUrlPrefix.test(raw)) {
@@ -547,18 +615,15 @@ function stageInlineMediaItem(item: any, params: { log?: any; traceId?: string |
 
 export function stageInlineMediaPayload(incoming: any, params: { log?: any; traceId?: string | null; messageId?: string | null }): number {
   if (!incoming || typeof incoming !== 'object') return 0;
+  const carrier = resolveMediaCarrier(incoming);
+  if (!carrier || typeof carrier !== 'object') return 0;
   let stagedCount = 0;
   const collectionTargets = [
-    incoming?.attachments,
-    incoming?.files,
-    incoming?.media,
-    incoming?.media_items,
-    incoming?.mediaItems,
-    incoming?.content?.attachments,
-    incoming?.content?.files,
-    incoming?.content?.media,
-    incoming?.content?.media_items,
-    incoming?.content?.mediaItems,
+    carrier?.attachments,
+    carrier?.files,
+    carrier?.media,
+    carrier?.media_items,
+    carrier?.mediaItems,
   ];
   for (const target of collectionTargets) {
     for (const item of toUnknownArray(target)) {
@@ -569,16 +634,11 @@ export function stageInlineMediaPayload(incoming: any, params: { log?: any; trac
   }
 
   const singularTargets = [
-    incoming?.attachment,
-    incoming?.file,
-    incoming?.image,
-    incoming?.voice,
-    incoming?.audio,
-    incoming?.content?.attachment,
-    incoming?.content?.file,
-    incoming?.content?.image,
-    incoming?.content?.voice,
-    incoming?.content?.audio,
+    carrier?.attachment,
+    carrier?.file,
+    carrier?.image,
+    carrier?.voice,
+    carrier?.audio,
   ];
   for (const target of singularTargets) {
     if (stageInlineMediaItem(target, params)) {
@@ -608,7 +668,7 @@ function parseMediaValue(item: any): InboundMediaEntry | undefined {
       'absolutePath',
       'staged_path',
       'stagedPath',
-    ]) || readStringField(item, ['src', 'uri', 'href', 'value']);
+    ]) || readStringField(item, ['src', 'uri', 'href']);
   const url = readStringField(item, [
     'url',
     'media_url',
@@ -634,13 +694,14 @@ function parseMediaValue(item: any): InboundMediaEntry | undefined {
 }
 
 function collectExplicitMediaEntries(incoming: any): InboundMediaEntry[] {
-  const paths = toUnknownArray(incoming?.media_paths ?? incoming?.mediaPaths).map((value) =>
+  const carrier = resolveMediaCarrier(incoming);
+  const paths = toUnknownArray(carrier?.media_paths ?? carrier?.mediaPaths).map((value) =>
     normalizeStringValue(value),
   );
-  const urls = toUnknownArray(incoming?.media_urls ?? incoming?.mediaUrls).map((value) =>
+  const urls = toUnknownArray(carrier?.media_urls ?? carrier?.mediaUrls).map((value) =>
     normalizeStringValue(value),
   );
-  const types = toUnknownArray(incoming?.media_types ?? incoming?.mediaTypes).map((value) =>
+  const types = toUnknownArray(carrier?.media_types ?? carrier?.mediaTypes).map((value) =>
     normalizeStringValue(value),
   );
 
@@ -656,9 +717,9 @@ function collectExplicitMediaEntries(incoming: any): InboundMediaEntry[] {
   }
 
   const single = normalizeMediaEntry({
-    path: readStringField(incoming, ['media_path', 'mediaPath']),
-    url: readStringField(incoming, ['media_url', 'mediaUrl']),
-    type: readStringField(incoming, ['media_type', 'mediaType']),
+    path: readStringField(carrier, ['media_path', 'mediaPath']),
+    url: readStringField(carrier, ['media_url', 'mediaUrl']),
+    type: readStringField(carrier, ['media_type', 'mediaType']),
   });
   if (single) entries.push(single);
 
@@ -666,18 +727,14 @@ function collectExplicitMediaEntries(incoming: any): InboundMediaEntry[] {
 }
 
 function collectStructuredMediaEntries(incoming: any): InboundMediaEntry[] {
+  const carrier = resolveMediaCarrier(incoming);
   const collected: InboundMediaEntry[] = [];
   const fromLists = [
-    incoming?.attachments,
-    incoming?.files,
-    incoming?.media,
-    incoming?.media_items,
-    incoming?.mediaItems,
-    incoming?.content?.attachments,
-    incoming?.content?.files,
-    incoming?.content?.media,
-    incoming?.content?.media_items,
-    incoming?.content?.mediaItems,
+    carrier?.attachments,
+    carrier?.files,
+    carrier?.media,
+    carrier?.media_items,
+    carrier?.mediaItems,
   ];
   for (const list of fromLists) {
     for (const item of toUnknownArray(list)) {
@@ -687,16 +744,11 @@ function collectStructuredMediaEntries(incoming: any): InboundMediaEntry[] {
   }
 
   const singular = [
-    incoming?.attachment,
-    incoming?.file,
-    incoming?.image,
-    incoming?.voice,
-    incoming?.audio,
-    incoming?.content?.attachment,
-    incoming?.content?.file,
-    incoming?.content?.image,
-    incoming?.content?.voice,
-    incoming?.content?.audio,
+    carrier?.attachment,
+    carrier?.file,
+    carrier?.image,
+    carrier?.voice,
+    carrier?.audio,
   ];
   for (const item of singular) {
     const entry = parseMediaValue(item);
