@@ -29,8 +29,16 @@ function normalizeThreadId(value) {
     const normalized = String(value || '').trim();
     return normalized || DEFAULT_THREAD_ID;
 }
-function buildSessionKey(deviceId, threadId) {
-    return `xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
+function normalizeContextEpoch(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed))
+        return 0;
+    const epoch = Math.floor(parsed);
+    return epoch > 0 ? epoch : 0;
+}
+function buildSessionKey(deviceId, threadId, contextEpoch = 0) {
+    const base = `xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
+    return contextEpoch > 0 ? `${base}:ctx${contextEpoch}` : base;
 }
 function getChannelConfig(cfg) {
     return cfg?.channels?.[CHANNEL_ID] || {};
