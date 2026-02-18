@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
-import { buildInboundMediaContext } from '../dist/src/channel.js';
+import { buildInboundMediaContext, stageInlineMediaPayload } from '../dist/src/channel.js';
 
 test('maps explicit media arrays into MsgContext fields', () => {
   const ctx = buildInboundMediaContext({
@@ -95,4 +96,29 @@ test('returns empty mapping when no usable media fields are present', () => {
   });
 
   assert.deepEqual(ctx, {});
+});
+
+test('stages inline data_b64 media and maps staged path', () => {
+  const payload = {
+    attachments: [
+      {
+        file_name: 'hello.txt',
+        mime_type: 'text/plain',
+        data_b64: Buffer.from('hello-openclaw').toString('base64'),
+      },
+    ],
+  };
+  const stagedCount = stageInlineMediaPayload(payload, {});
+  assert.equal(stagedCount, 1);
+
+  const stagedPath = payload.attachments[0]?.path;
+  assert.equal(typeof stagedPath, 'string');
+  assert.equal(fs.existsSync(stagedPath), true);
+  assert.equal(fs.readFileSync(stagedPath, 'utf8'), 'hello-openclaw');
+
+  const ctx = buildInboundMediaContext(payload);
+  assert.equal(ctx.MediaPath, stagedPath);
+  assert.deepEqual(ctx.MediaTypes, ['text/plain']);
+
+  fs.unlinkSync(stagedPath);
 });

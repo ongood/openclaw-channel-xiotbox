@@ -401,6 +401,136 @@ function normalizeMediaEntry(entry) {
         type,
     };
 }
+function extensionFromMime(mimeType) {
+    const mime = normalizeStringValue(mimeType)?.toLowerCase() || '';
+    switch (mime) {
+        case 'image/jpeg':
+            return '.jpg';
+        case 'image/png':
+            return '.png';
+        case 'image/gif':
+            return '.gif';
+        case 'image/webp':
+            return '.webp';
+        case 'image/heic':
+            return '.heic';
+        case 'application/pdf':
+            return '.pdf';
+        case 'text/plain':
+            return '.txt';
+        case 'text/markdown':
+            return '.md';
+        case 'text/x-python':
+            return '.py';
+        case 'application/json':
+            return '.json';
+        case 'audio/m4a':
+            return '.m4a';
+        case 'audio/wav':
+            return '.wav';
+        case 'audio/mpeg':
+            return '.mp3';
+        case 'audio/ogg':
+            return '.ogg';
+        default:
+            return '';
+    }
+}
+function readInlineMediaB64(item) {
+    const raw = readStringField(item, [
+        'data_b64',
+        'dataB64',
+        'bytes_b64',
+        'bytesB64',
+        'file_b64',
+        'fileB64',
+        'base64',
+        'b64',
+    ]);
+    if (!raw)
+        return undefined;
+    const dataUrlPrefix = /^data:[^;]+;base64,/i;
+    if (dataUrlPrefix.test(raw)) {
+        return raw.replace(dataUrlPrefix, '');
+    }
+    return raw;
+}
+function stageInlineMediaItem(item, params) {
+    if (!item || typeof item !== 'object' || Array.isArray(item))
+        return false;
+    const inlineB64 = readInlineMediaB64(item);
+    if (!inlineB64)
+        return false;
+    try {
+        const bytes = Buffer.from(inlineB64, 'base64');
+        if (!bytes.length)
+            return false;
+        const fileName = readStringField(item, ['file_name', 'fileName', 'name']) || 'media.bin';
+        const extFromName = path.extname(fileName);
+        const mimeType = readStringField(item, ['mime_type', 'mimeType', 'content_type', 'contentType', 'media_type', 'mediaType']) || '';
+        const ext = extFromName || extensionFromMime(mimeType) || '.bin';
+        const stagedPath = path.join(os.tmpdir(), `xiotbox-inline-${Date.now()}-${Math.random().toString(16).slice(2)}${ext}`);
+        fs.writeFileSync(stagedPath, bytes);
+        item.path = stagedPath;
+        item.url = stagedPath;
+        item.size_bytes = bytes.length;
+        if (!item.mime_type && !item.mimeType && mimeType) {
+            item.mime_type = mimeType;
+        }
+        return true;
+    }
+    catch (err) {
+        params.log?.warn?.(JSON.stringify({
+            event: 'inline_media_stage_failed',
+            trace_id: params.traceId || '',
+            message_id: params.messageId || '',
+            error: err?.message || String(err),
+        }));
+        return false;
+    }
+}
+export function stageInlineMediaPayload(incoming, params) {
+    if (!incoming || typeof incoming !== 'object')
+        return 0;
+    let stagedCount = 0;
+    const collectionTargets = [
+        incoming?.attachments,
+        incoming?.files,
+        incoming?.media,
+        incoming?.media_items,
+        incoming?.mediaItems,
+        incoming?.content?.attachments,
+        incoming?.content?.files,
+        incoming?.content?.media,
+        incoming?.content?.media_items,
+        incoming?.content?.mediaItems,
+    ];
+    for (const target of collectionTargets) {
+        for (const item of toUnknownArray(target)) {
+            if (stageInlineMediaItem(item, params)) {
+                stagedCount += 1;
+            }
+        }
+    }
+    const singularTargets = [
+        incoming?.attachment,
+        incoming?.file,
+        incoming?.image,
+        incoming?.voice,
+        incoming?.audio,
+        incoming?.content?.attachment,
+        incoming?.content?.file,
+        incoming?.content?.image,
+        incoming?.content?.voice,
+        incoming?.content?.audio,
+    ];
+    for (const target of singularTargets) {
+        if (stageInlineMediaItem(target, params)) {
+            stagedCount += 1;
+        }
+    }
+    return stagedCount;
+}
 function parseMediaValue(item) {
     if (item == null)
         return undefined;
@@ -986,6 +1116,19 @@ export const xiotboxPlugin = {
                         text = '用户请求退出操控模式，请停止调用任何工具，仅用文字回复。';
                     }
                     const forceTextOnly = shouldForceExit || hardExitRequested;
+                    const stagedInlineMediaCount = stageInlineMediaPayload(incoming, {
+                        log,
+                        traceId,
+                        messageId: cmdId,
+                    });
+                    if (stagedInlineMediaCount > 0) {
+                        log?.info?.(JSON.stringify({
+                            event: 'inline_media_staged',
+                            trace_id: traceId || '',
+                            message_id: cmdId,
+                            staged_count: stagedInlineMediaCount,
+                        }));
+                    }
                     const inboundMediaCtx = buildInboundMediaContext(incoming);
                     if (inboundMediaCtx.MediaPaths?.length) {
                         log?.debug?.(JSON.stringify({
