@@ -27,12 +27,13 @@ Examples:
 Notes:
   - This script is dedicated to BotDrop/Termux/proot environments.
   - It avoids `openclaw update` and performs the BotDrop-safe flow:
-    stop gateway -> npm install -> rebuild wrapper -> restart gateway.
+    stop gateway -> npm install -> patch koffi(Android) -> rebuild wrapper -> restart gateway.
 
 Optional environment variables:
   - PREFIX (default: /data/data/app.botdrop/files/usr)
   - HOME (default: /data/data/app.botdrop/files/home)
   - OPENCLAW_RESTART_GATEWAY=0|1 (default: 1)
+  - OPENCLAW_PATCH_KOFFI_ANDROID=0|1 (default: 1)
   - BOTDROP_STOP_MONITOR=0|1 (default: 1)
   - BOTDROP_RESTART_MONITOR=0|1 (default: 1)
   - OPENCLAW_GATEWAY_PID_FILE (default: $HOME/.openclaw/gateway.pid)
@@ -58,6 +59,7 @@ PREFIX="${PREFIX:-/data/data/app.botdrop/files/usr}"
 HOME="${HOME:-/data/data/app.botdrop/files/home}"
 
 OPENCLAW_RESTART_GATEWAY="${OPENCLAW_RESTART_GATEWAY:-1}"
+OPENCLAW_PATCH_KOFFI_ANDROID="${OPENCLAW_PATCH_KOFFI_ANDROID:-1}"
 BOTDROP_STOP_MONITOR="${BOTDROP_STOP_MONITOR:-1}"
 BOTDROP_RESTART_MONITOR="${BOTDROP_RESTART_MONITOR:-1}"
 OPENCLAW_GATEWAY_PID_FILE="${OPENCLAW_GATEWAY_PID_FILE:-$HOME/.openclaw/gateway.pid}"
@@ -169,6 +171,69 @@ install_openclaw() {
   npm install -g "$PACKAGE_SPEC" --ignore-scripts --force
 }
 
+patch_single_koffi_index() {
+  local koffi_index="$1"
+
+  if [ ! -f "$koffi_index" ]; then
+    return 0
+  fi
+
+  if grep -q "koffi native module not available on this platform" "$koffi_index" 2>/dev/null; then
+    info "koffi Android mock already applied: $koffi_index"
+    return 0
+  fi
+
+  if [ ! -f "$koffi_index.orig" ]; then
+    cp "$koffi_index" "$koffi_index.orig"
+    info "Backed up original koffi loader: $koffi_index.orig"
+  fi
+
+  cat > "$koffi_index" <<'EOF'
+// Mock koffi module for platforms where native module is unavailable (e.g. Android/Termux)
+module.exports = {
+  load() {
+    throw new Error("koffi native module not available on this platform");
+  },
+};
+EOF
+
+  info "Applied Android-safe koffi mock: $koffi_index"
+}
+
+patch_koffi_android_if_needed() {
+  if ! is_truthy "$OPENCLAW_PATCH_KOFFI_ANDROID"; then
+    info "Skipping koffi Android patch (OPENCLAW_PATCH_KOFFI_ANDROID=$OPENCLAW_PATCH_KOFFI_ANDROID)"
+    return 0
+  fi
+
+  local node_platform=""
+  node_platform="$("$PREFIX/bin/node" -p "process.platform" 2>/dev/null || true)"
+  if [ "$node_platform" != "android" ]; then
+    info "Node platform is '$node_platform'; skip koffi Android patch"
+    return 0
+  fi
+
+  local base="$PREFIX/lib/node_modules/openclaw/node_modules"
+  local found=0
+
+  local candidates=(
+    "$base/koffi/index.js"
+    "$base/@mariozechner/pi-tui/node_modules/koffi/index.js"
+  )
+
+  local p=""
+  for p in "${candidates[@]}"; do
+    if [ -f "$p" ]; then
+      found=1
+      patch_single_koffi_index "$p"
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    warn "koffi index.js not found under $base (skip Android patch)"
+  fi
+}
+
 rebuild_wrapper() {
   local wrapper="$PREFIX/bin/openclaw"
   local bash_bin="$PREFIX/bin/bash"
@@ -244,6 +309,7 @@ main() {
   stop_monitor_if_needed
   stop_gateway
   install_openclaw
+  patch_koffi_android_if_needed
   rebuild_wrapper
   print_version
   start_gateway_if_needed

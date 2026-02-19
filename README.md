@@ -364,8 +364,9 @@ bash scripts/upgrade_openclaw_for_botdrop_termux_proot.sh 2026.2.6
 1. 停 `GatewayMonitorService`（可选）
 2. 停 gateway
 3. `npm install -g openclaw@... --ignore-scripts --force`
-4. 重建 `openclaw` wrapper（termux-chroot + node）
-5. 启动 gateway（可选）
+4. Android 环境自动为 `koffi` 应用兼容 mock（可用 `OPENCLAW_PATCH_KOFFI_ANDROID=0` 关闭）
+5. 重建 `openclaw` wrapper（termux-chroot + node）
+6. 启动 gateway（可选）
 
 ### BotDrop 下仅命令行配置 DeepSeek（绕开 UI 覆盖问题）
 
