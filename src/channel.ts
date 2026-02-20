@@ -830,10 +830,24 @@ function buildTextOnlyConfig(cfg: any): any {
 const HARD_EXIT_PATTERNS = [
   /^\/stop\b/i,
   /^\/exit\b/i,
+  /^\/quit\b/i,
+  /^\/chat\b/i,
+  /^\/text\b/i,
   /退出控制/,
+  /结束控制/,
   /停止操控/,
+  /结束操控/,
   /停止控制/,
   /退出操控/,
+  /退出操作/,
+  /结束操作/,
+  /切回聊天/,
+  /恢复聊天/,
+  /只聊天/,
+  /仅聊天/,
+  /stop\s*control/i,
+  /exit\s*control/i,
+  /back\s*to\s*chat/i,
 ];
 
 function isHardExitCommand(text: string): boolean {
@@ -849,6 +863,7 @@ const FORCE_EXIT_TTL_MS = 10 * 60 * 1000; // 10 min
 interface ToolOnlyEntry {
   count: number;
   updatedAt: number;
+  fingerprint: string;
 }
 
 const toolOnlyCounters = new Map<string, ToolOnlyEntry>();
@@ -858,26 +873,84 @@ function toolOnlyCounterKey(
   deviceId: string,
   threadId: string,
   senderId: string,
-  contextEpoch: number = 0,
 ): string {
-  const epoch = normalizeContextEpoch(contextEpoch);
-  return `${deviceId}:${normalizeThreadId(threadId)}:ctx${epoch}:${senderId}`;
+  return `${deviceId}:${normalizeThreadId(threadId)}:${senderId}`;
 }
 
-function forceExitKey(deviceId: string, threadId: string, contextEpoch: number = 0): string {
-  const epoch = normalizeContextEpoch(contextEpoch);
-  return `${deviceId}:${normalizeThreadId(threadId)}:ctx${epoch}`;
+function forceExitKey(deviceId: string, threadId: string): string {
+  return `${deviceId}:${normalizeThreadId(threadId)}`;
 }
 
-function incrementToolOnlyCounter(key: string): number {
+function isLikelyNonSubstantiveAck(text: string): boolean {
+  const normalized = (text || '').trim();
+  if (!normalized) return true;
+  const compact = normalized
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[。.!！?？,，;；:]/g, '');
+  const exactAcks = new Set([
+    '操作已完成',
+    '操作完成',
+    '已完成',
+    '完成',
+    'done',
+    'ok',
+    'okay',
+    'success',
+    'completed',
+    '任务已完成',
+    '处理完成',
+  ]);
+  if (exactAcks.has(compact)) return true;
+  if (compact.length <= 12 && (compact.includes('操作已完成') || compact.includes('任务已完成'))) {
+    return true;
+  }
+  return false;
+}
+
+function buildToolOnlyFingerprint(params: {
+  branch: 'tool_only' | 'no_reply' | 'ack_only' | 'empty';
+  text: string;
+  toolNames: string[];
+  sawControlToolSignal: boolean;
+  sawInProgressSignal: boolean;
+}): string {
+  const compactText = (params.text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[。.!！?？,，;；:]/g, '')
+    .slice(0, 64);
+  const uniqTools = Array.from(
+    new Set(
+      params.toolNames
+        .map((name) => String(name || '').trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ).sort();
+  return [
+    `b=${params.branch}`,
+    `t=${compactText || '-'}`,
+    `tools=${uniqTools.join(',') || '-'}`,
+    `ctrl=${params.sawControlToolSignal ? '1' : '0'}`,
+    `prog=${params.sawInProgressSignal ? '1' : '0'}`,
+  ].join('|');
+}
+
+function incrementToolOnlyCounter(key: string, fingerprint: string): number {
   const now = Date.now();
   const existing = toolOnlyCounters.get(key);
   if (existing && now - existing.updatedAt < TOOL_ONLY_COUNTER_TTL_MS) {
-    existing.count += 1;
+    if (existing.fingerprint === fingerprint) {
+      existing.count += 1;
+    } else {
+      existing.count = 1;
+      existing.fingerprint = fingerprint;
+    }
     existing.updatedAt = now;
     return existing.count;
   }
-  toolOnlyCounters.set(key, { count: 1, updatedAt: now });
+  toolOnlyCounters.set(key, { count: 1, updatedAt: now, fingerprint });
   return 1;
 }
 
@@ -964,8 +1037,8 @@ function detectToolSignals(outPayload: any): boolean {
   );
 }
 
-function summarizeToolSignals(outPayload: any): string {
-  if (!outPayload || typeof outPayload !== 'object') return '';
+function extractToolSignalNames(outPayload: any): string[] {
+  if (!outPayload || typeof outPayload !== 'object') return [];
   const names: string[] = [];
   const tc = outPayload.tool_calls || outPayload.toolCalls;
   if (Array.isArray(tc)) {
@@ -978,8 +1051,88 @@ function summarizeToolSignals(outPayload: any): string {
   if (fc?.name) names.push(String(fc.name));
   const act = outPayload.action;
   if (typeof act === 'string') names.push(act);
+  return Array.from(new Set(names.map((s) => String(s || '').trim()).filter(Boolean)));
+}
 
-  const uniq = Array.from(new Set(names.map((s) => s.trim()).filter(Boolean)));
+function isLikelyControlToolName(name: string): boolean {
+  const normalized = String(name || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes('xiotbox_control') ||
+    normalized === 'control' ||
+    normalized.endsWith('_control') ||
+    normalized.includes('device_control') ||
+    normalized.includes('android_control') ||
+    normalized.includes('ios_control') ||
+    normalized.includes('adb_control')
+  );
+}
+
+const IN_PROGRESS_HINTS = [
+  'running',
+  'in_progress',
+  'inprogress',
+  'pending',
+  'processing',
+  'working',
+  'executing',
+  'queued',
+  '进行中',
+  '处理中',
+  '执行中',
+  '等待中',
+];
+
+function isLikelyInProgressText(text: string): boolean {
+  const compact = String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  if (!compact) return false;
+  return IN_PROGRESS_HINTS.some((hint) => compact.includes(hint));
+}
+
+function hasInProgressSignal(outPayload: any): boolean {
+  if (!outPayload || typeof outPayload !== 'object') return false;
+  const visited = new Set<any>();
+  const stack: any[] = [outPayload];
+  let depth = 0;
+  while (stack.length && depth < 200) {
+    depth += 1;
+    const current = stack.pop();
+    if (!current || typeof current !== 'object') continue;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const [rawKey, value] of Object.entries(current)) {
+      const key = String(rawKey || '').toLowerCase();
+      if (typeof value === 'string') {
+        const checkable =
+          key === 'status' ||
+          key === 'state' ||
+          key === 'phase' ||
+          key === 'stage' ||
+          key.endsWith('_status') ||
+          key.endsWith('_state') ||
+          key.includes('progress');
+        if (checkable && isLikelyInProgressText(value)) {
+          return true;
+        }
+      } else if (typeof value === 'number') {
+        if (key.includes('progress') && value >= 0 && value < 100) {
+          return true;
+        }
+      } else if (Array.isArray(value)) {
+        for (const item of value) stack.push(item);
+      } else if (value && typeof value === 'object') {
+        stack.push(value);
+      }
+    }
+  }
+  return false;
+}
+
+function summarizeToolSignals(outPayload: any): string {
+  const uniq = extractToolSignalNames(outPayload);
   if (!uniq.length) return '';
   return `tool=${uniq.join(',')}`;
 }
@@ -1246,9 +1399,9 @@ export const xiotboxPlugin = {
             finalCfg.DEVICE_ID,
             threadId,
             senderId,
-            contextEpoch,
           );
-          const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID, threadId, contextEpoch);
+          const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID, threadId);
+          const fullConfig = runtime?.config?.loadConfig?.() ?? cfg;
 
           log?.debug?.(JSON.stringify({
             event: 'session_scope',
@@ -1283,6 +1436,7 @@ export const xiotboxPlugin = {
           const hardExitRequested = !shouldForceExit && isHardExitCommand(text);
           if (hardExitRequested) {
             resetToolOnlyCounter(counterKey);
+            scheduleForceExit(forceExitKeyValue);
             log?.info?.(JSON.stringify({
               event: 'hard_exit_command',
               trace_id: traceId,
@@ -1291,8 +1445,21 @@ export const xiotboxPlugin = {
               sender_id: senderId,
               input_text: text.slice(0, 80),
             }));
-            // Rewrite the user text so OpenClaw sees a normal prompt, not the raw /stop
-            text = '用户请求退出操控模式，请停止调用任何工具，仅用文字回复。';
+            // Hard-exit should be deterministic: do not rely on model/tool path for this turn.
+            const hardExitChunkSeq = 1;
+            const successPayload = {
+              command_id: cmdId,
+              status: 'success',
+              trace_id: traceId,
+              result: buildEncryptedResult(
+                '已退出控制模式，已切回聊天模式。接下来仅进行文字对话；如需再次操控，请重新描述要执行的操作。',
+                hardExitChunkSeq,
+                resolveSessionUsageSnapshot(fullConfig, sessionKey),
+              ),
+            };
+            client.sendMessage('COMMAND_RESULT', successPayload);
+            setCached(cmdId, successPayload);
+            return;
           }
           const forceTextOnly = shouldForceExit || hardExitRequested;
           const stagedInlineMediaCount = stageInlineMediaPayload(incoming, {
@@ -1360,6 +1527,8 @@ export const xiotboxPlugin = {
           let sawAnyDeliver = false;
           let sawToolLikeDeliver = false;
           let sawNonTextDeliver = false;
+          let sawControlToolSignal = false;
+          let sawInProgressSignal = false;
           const toolNamesSeen: string[] = [];
 
           const deliver = async (outPayload: any, info?: any) => {
@@ -1370,14 +1539,22 @@ export const xiotboxPlugin = {
             if (hasTool) {
               sawToolLikeDeliver = true;
               // Collect tool names for summary
-              const sig = summarizeToolSignals(outPayload);
-              if (sig) {
-                const match = sig.match(/^tool=(.+)$/);
-                if (match) toolNamesSeen.push(...match[1].split(','));
+              const toolNames = extractToolSignalNames(outPayload);
+              if (toolNames.length) {
+                toolNamesSeen.push(...toolNames);
+                if (toolNames.some((name) => isLikelyControlToolName(name))) {
+                  sawControlToolSignal = true;
+                }
               }
+            }
+            if (hasInProgressSignal(outPayload)) {
+              sawInProgressSignal = true;
             }
 
             const replyText = normalizeTextPayload(outPayload);
+            if (replyText && isLikelyInProgressText(replyText)) {
+              sawInProgressSignal = true;
+            }
 
             const keysPresent =
               outPayload && typeof outPayload === 'object'
@@ -1393,6 +1570,8 @@ export const xiotboxPlugin = {
               has_tool: hasTool,
               keys: keysPresent,
               tool_names: summarizeToolSignals(outPayload),
+              control_tool_signal: sawControlToolSignal,
+              in_progress_signal: sawInProgressSignal,
             }));
 
             if (!replyText) {
@@ -1427,7 +1606,6 @@ export const xiotboxPlugin = {
             });
           };
 
-          const fullConfig = runtime?.config?.loadConfig?.() ?? cfg;
           const effectiveConfig = forceTextOnly ? buildTextOnlyConfig(fullConfig) : fullConfig;
 
           // Prefer deterministic dispatch path that waits for all queued deliveries before finalizing.
@@ -1486,7 +1664,18 @@ export const xiotboxPlugin = {
           const toolOnlyLikely = sawToolLikeDeliver || sawNonTextDeliver;
           const isToolOnlyReply = !resolvedFinalText && toolOnlyLikely;
           const isNoReply = resolvedFinalText ? shouldSkipReply(resolvedFinalText) : false;
-          const needsFallback = isToolOnlyReply || isNoReply || !resolvedFinalText;
+          const isAckOnlyReply = resolvedFinalText
+            ? isLikelyNonSubstantiveAck(resolvedFinalText)
+            : false;
+          const needsFallback = isToolOnlyReply || isNoReply || !resolvedFinalText || isAckOnlyReply;
+          const shouldCountFallback = needsFallback && !sawInProgressSignal;
+          const fallbackBranch: 'tool_only' | 'no_reply' | 'ack_only' | 'empty' = isToolOnlyReply
+            ? 'tool_only'
+            : isNoReply
+              ? 'no_reply'
+              : isAckOnlyReply
+                ? 'ack_only'
+                : 'empty';
 
           // ── Structured log helper ──
           const structuredLog = (level: 'debug' | 'info' | 'warn', event: string, extra?: Record<string, any>) => {
@@ -1497,7 +1686,10 @@ export const xiotboxPlugin = {
               context_epoch: contextEpoch,
               session_key: sessionKey,
               message_id: cmdId,
-              branch: needsFallback ? (isToolOnlyReply ? 'tool_only' : isNoReply ? 'no_reply' : 'empty') : 'normal',
+              branch: needsFallback ? fallbackBranch : 'normal',
+              should_count_fallback: shouldCountFallback,
+              saw_control_tool_signal: sawControlToolSignal,
+              saw_in_progress_signal: sawInProgressSignal,
               resolved_text_len: resolvedFinalText.length,
               tool_names: toolNamesSeen.slice(),
               ...extra,
@@ -1506,8 +1698,14 @@ export const xiotboxPlugin = {
           };
 
           // Build a dynamic summary when only tool calls were executed (no human text).
-          const buildToolSummary = (): string => {
+          const buildToolSummary = (opts?: { inProgress?: boolean }): string => {
             const uniq = Array.from(new Set(toolNamesSeen.map(s => s.trim()).filter(Boolean)));
+            if (opts?.inProgress) {
+              if (uniq.length) {
+                return `（正在执行: ${uniq.join(', ')}）`;
+              }
+              return '（正在执行操作，请稍候）';
+            }
             if (uniq.length) {
               return `（已执行: ${uniq.join(', ')}）`;
             }
@@ -1536,7 +1734,9 @@ export const xiotboxPlugin = {
               return;
             }
 
-            resolvedFinalText = buildToolSummary();
+            resolvedFinalText = buildToolSummary({
+              inProgress: sawInProgressSignal,
+            });
             structuredLog('info', 'tool_only_summary', {
               dispatch_meta: dispatchMeta,
               saw_any_deliver: sawAnyDeliver,
@@ -1545,13 +1745,22 @@ export const xiotboxPlugin = {
 
           // If explicitly asked for NO_REPLY semantics, still avoid empty bubble.
           if (shouldSkipReply(resolvedFinalText)) {
-            resolvedFinalText = buildToolSummary();
+            resolvedFinalText = buildToolSummary({
+              inProgress: sawInProgressSignal,
+            });
             structuredLog('info', 'no_reply_to_summary');
           }
 
           // ── Consecutive tool-only counter: auto-fallback after MAX_CONSECUTIVE_TOOL_ONLY ──
-          if (needsFallback) {
-            const consecutiveCount = incrementToolOnlyCounter(counterKey);
+          if (shouldCountFallback) {
+            const fallbackFingerprint = buildToolOnlyFingerprint({
+              branch: fallbackBranch,
+              text: resolvedFinalText,
+              toolNames: toolNamesSeen,
+              sawControlToolSignal,
+              sawInProgressSignal,
+            });
+            const consecutiveCount = incrementToolOnlyCounter(counterKey, fallbackFingerprint);
             if (consecutiveCount >= MAX_CONSECUTIVE_TOOL_ONLY) {
               resetToolOnlyCounter(counterKey);
               scheduleForceExit(forceExitKeyValue);
@@ -1564,8 +1773,12 @@ export const xiotboxPlugin = {
             } else {
               structuredLog('debug', 'consecutive_tool_only_tick', {
                 consecutive_count: consecutiveCount,
+                fallback_fingerprint: fallbackFingerprint,
               });
             }
+          } else if (needsFallback) {
+            resetToolOnlyCounter(counterKey);
+            structuredLog('info', 'fallback_counter_suppressed_in_progress');
           } else {
             // Normal text reply — reset the counter
             resetToolOnlyCounter(counterKey);

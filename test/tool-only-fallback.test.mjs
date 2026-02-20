@@ -17,14 +17,20 @@ function toolOnlyCounterKey(deviceId, senderId) {
 }
 
 function incrementToolOnlyCounter(key) {
+  const fingerprint = arguments.length > 1 ? arguments[1] : 'default';
   const now = Date.now();
   const existing = toolOnlyCounters.get(key);
   if (existing && now - existing.updatedAt < TOOL_ONLY_COUNTER_TTL_MS) {
-    existing.count += 1;
+    if (existing.fingerprint === fingerprint) {
+      existing.count += 1;
+    } else {
+      existing.count = 1;
+      existing.fingerprint = fingerprint;
+    }
     existing.updatedAt = now;
     return existing.count;
   }
-  toolOnlyCounters.set(key, { count: 1, updatedAt: now });
+  toolOnlyCounters.set(key, { count: 1, updatedAt: now, fingerprint });
   return 1;
 }
 
@@ -43,10 +49,24 @@ function shouldSkipReply(text) {
 const HARD_EXIT_PATTERNS = [
   /^\/stop\b/i,
   /^\/exit\b/i,
+  /^\/quit\b/i,
+  /^\/chat\b/i,
+  /^\/text\b/i,
   /退出控制/,
+  /结束控制/,
   /停止操控/,
+  /结束操控/,
   /停止控制/,
   /退出操控/,
+  /退出操作/,
+  /结束操作/,
+  /切回聊天/,
+  /恢复聊天/,
+  /只聊天/,
+  /仅聊天/,
+  /stop\s*control/i,
+  /exit\s*control/i,
+  /back\s*to\s*chat/i,
 ];
 
 function isHardExitCommand(text) {
@@ -60,6 +80,37 @@ function buildToolSummary(toolNamesSeen) {
     return `（已执行: ${uniq.join(', ')}）`;
   }
   return '（操作已完成）';
+}
+
+function isLikelyNonSubstantiveAck(text) {
+  const normalized = (text || '').trim();
+  if (!normalized) return true;
+  const compact = normalized
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[。.!！?？,，;；:]/g, '');
+  const exactAcks = new Set([
+    '操作已完成',
+    '操作完成',
+    '已完成',
+    '完成',
+    'done',
+    'ok',
+    'okay',
+    'success',
+    'completed',
+    '任务已完成',
+    '处理完成',
+  ]);
+  if (exactAcks.has(compact)) return true;
+  if (compact.length <= 12 && (compact.includes('操作已完成') || compact.includes('任务已完成'))) {
+    return true;
+  }
+  return false;
+}
+
+function shouldCountFallback(needsFallback, sawInProgressSignal) {
+  return Boolean(needsFallback && !sawInProgressSignal);
 }
 
 // ── Test harness ──
@@ -105,7 +156,7 @@ test('Consecutive tool-only >= 3 triggers auto-reset message', () => {
   const key = toolOnlyCounterKey('dev1', 'user1');
   const results = [];
   for (let i = 0; i < 5; i++) {
-    const count = incrementToolOnlyCounter(key);
+    const count = incrementToolOnlyCounter(key, 'tool_only|xiotbox_control');
     if (count >= MAX_CONSECUTIVE_TOOL_ONLY) {
       resetToolOnlyCounter(key);
       results.push('auto_reset');
@@ -146,6 +197,10 @@ test('Hard exit commands are detected', () => {
   assert(isHardExitCommand('停止操控') === true, '停止操控');
   assert(isHardExitCommand('停止控制') === true, '停止控制');
   assert(isHardExitCommand('退出操控') === true, '退出操控');
+  assert(isHardExitCommand('结束控制') === true, '结束控制');
+  assert(isHardExitCommand('切回聊天') === true, '切回聊天');
+  assert(isHardExitCommand('/chat') === true, '/chat');
+  assert(isHardExitCommand('back to chat') === true, 'back to chat');
   assert(isHardExitCommand('帮我打开微信') === false, 'normal message');
   assert(isHardExitCommand('') === false, 'empty');
 });
@@ -170,6 +225,31 @@ test('buildToolSummary produces dynamic text, not fixed placeholder', () => {
   assert(s3 === '（操作已完成）', 'no tools');
   // Must NOT be the old fixed placeholder
   assert(!s1.includes('无额外文字回复'), 'must not contain old placeholder');
+});
+
+test('Ack-only reply is treated as non-substantive', () => {
+  assert(isLikelyNonSubstantiveAck('（操作已完成）') === true, 'ack with brackets');
+  assert(isLikelyNonSubstantiveAck('任务已完成') === true, 'task completed ack');
+  assert(isLikelyNonSubstantiveAck('好的，我已经完成并给你结论：xxx') === false, 'substantive text');
+});
+
+test('Fallback fingerprint change resets counter instead of accumulating', () => {
+  const key = toolOnlyCounterKey('dev1', 'user1');
+  assert(incrementToolOnlyCounter(key, 'ack_only|step1') === 1, 'step1 first');
+  assert(incrementToolOnlyCounter(key, 'ack_only|step1') === 2, 'step1 second');
+  assert(incrementToolOnlyCounter(key, 'ack_only|step2') === 1, 'step2 should reset');
+  assert(incrementToolOnlyCounter(key, 'ack_only|step2') === 2, 'step2 second');
+});
+
+test('In-progress signal suppresses fallback counter', () => {
+  const key = toolOnlyCounterKey('dev1', 'user1');
+  const needsFallback = true;
+  const sawInProgressSignal = true;
+  assert(shouldCountFallback(needsFallback, sawInProgressSignal) === false, 'counter should be suppressed');
+  if (shouldCountFallback(needsFallback, sawInProgressSignal)) {
+    incrementToolOnlyCounter(key, 'tool_only|in_progress');
+  }
+  assert(toolOnlyCounters.has(key) === false, 'counter map should stay empty when suppressed');
 });
 
 test('Full flow: 3 consecutive tool-only then auto-reset, then normal resumes', () => {
