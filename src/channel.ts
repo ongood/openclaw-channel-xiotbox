@@ -444,6 +444,31 @@ function normalizeTextPayload(payload: any): string {
     .trim();
 }
 
+function normalizeReasoningPayload(payload: any): string {
+  if (!payload || typeof payload !== 'object') return '';
+  const reasoningKeys = [
+    'reasoning',
+    'thinking',
+    'thought',
+    'thoughts',
+    'analysis',
+    'rationale',
+    'reasoning_text',
+    'reasoningText',
+    'thinking_text',
+    'thinkingText',
+  ];
+  const parts: string[] = [];
+  for (const key of reasoningKeys) {
+    const value = (payload as any)?.[key];
+    if (value == null) continue;
+    const text = normalizeTextPayload(value);
+    if (!text) continue;
+    parts.push(text);
+  }
+  return parts.join('\n').trim();
+}
+
 function shouldSkipReply(text: string): boolean {
   const trimmed = (text || '').trim();
   if (!trimmed) return true;
@@ -1780,8 +1805,8 @@ export const xiotboxPlugin = {
           let lastText = '';
           let finalText = '';
           const blockParts: string[] = [];
-          let lastStreamAt = 0;
-          let lastStreamText = '';
+          let lastTextStreamAt = 0;
+          let lastTextStreamText = '';
           let runningSnapshotText = '';
           let thinkingSnapshotText = '';
           let progressSnapshotText = '';
@@ -1833,14 +1858,13 @@ export const xiotboxPlugin = {
             progressSnapshotText = textPayload;
 
             chunkSeq += 1;
-            const stableText = runningSnapshotText || lastStreamText || '';
+            const stableText = runningSnapshotText || lastTextStreamText || textPayload;
             client.sendMessage('COMMAND_RESULT', {
               command_id: cmdId,
               status: 'running',
               trace_id: traceId,
               result: buildEncryptedResult(stableText, chunkSeq, null, {
                 progress: progressSnapshotText,
-                thinking: thinkingSnapshotText,
                 lane: 'progress',
               }),
             });
@@ -1952,10 +1976,10 @@ export const xiotboxPlugin = {
             runningSnapshotText = blockSnapshotText;
 
             const now = Date.now();
-            if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-            if (blockSnapshotText === lastStreamText) return;
-            lastStreamAt = now;
-            lastStreamText = blockSnapshotText;
+            if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+            if (blockSnapshotText === lastTextStreamText) return;
+            lastTextStreamAt = now;
+            lastTextStreamText = blockSnapshotText;
 
             chunkSeq += 1;
             client.sendMessage('COMMAND_RESULT', {
@@ -1963,7 +1987,6 @@ export const xiotboxPlugin = {
               status: 'running',
               trace_id: traceId,
               result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
-                thinking: thinkingSnapshotText,
                 progress: progressSnapshotText,
                 lane: 'text',
               }),
@@ -2017,17 +2040,16 @@ export const xiotboxPlugin = {
                 );
                 runningSnapshotText = blockSnapshotText;
                 const now = Date.now();
-                if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-                if (blockSnapshotText === lastStreamText) return;
-                lastStreamAt = now;
-                lastStreamText = blockSnapshotText;
+                if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+                if (blockSnapshotText === lastTextStreamText) return;
+                lastTextStreamAt = now;
+                lastTextStreamText = blockSnapshotText;
                 chunkSeq += 1;
                 client.sendMessage('COMMAND_RESULT', {
                   command_id: cmdId,
                   status: 'running',
                   trace_id: traceId,
                   result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
-                    thinking: thinkingSnapshotText,
                     progress: progressSnapshotText,
                     lane: 'text',
                   }),
@@ -2038,30 +2060,42 @@ export const xiotboxPlugin = {
                 const reasoningText =
                   typeof payload === 'string'
                     ? payload
-                    : payload?.text || payload?.thinking || normalizeTextPayload(payload);
+                    : payload?.text || payload?.thinking || normalizeReasoningPayload(payload);
                 if (!reasoningText) return;
                 thinkingSnapshotText = mergeRunningSnapshot(
                   thinkingSnapshotText,
                   reasoningText,
                 );
+                const reasoningSnapshotText = mergeRunningSnapshot(
+                  runningSnapshotText,
+                  reasoningText,
+                );
+                runningSnapshotText = reasoningSnapshotText;
                 const now = Date.now();
-                if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-                lastStreamAt = now;
+                if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+                if (reasoningSnapshotText === lastTextStreamText) return;
+                lastTextStreamAt = now;
+                lastTextStreamText = reasoningSnapshotText;
                 chunkSeq += 1;
-                const stableText = runningSnapshotText || lastStreamText || '';
                 client.sendMessage('COMMAND_RESULT', {
                   command_id: cmdId,
                   status: 'running',
                   trace_id: traceId,
-                  result: buildEncryptedResult(stableText, chunkSeq, null, {
-                    thinking: thinkingSnapshotText,
+                  result: buildEncryptedResult(reasoningSnapshotText, chunkSeq, null, {
                     progress: progressSnapshotText,
-                    lane: 'thinking',
+                    lane: 'text',
                   }),
                 });
               },
               onPartialReply: (payload: any) => {
                 if (!finalCfg.STREAMING) return;
+                const reasoningText = normalizeReasoningPayload(payload);
+                if (reasoningText) {
+                  thinkingSnapshotText = mergeRunningSnapshot(
+                    thinkingSnapshotText,
+                    reasoningText,
+                  );
+                }
                 const partialText = normalizeTextPayload(payload);
                 if (!partialText) return;
                 const partialSnapshotText = mergeRunningSnapshot(
@@ -2070,17 +2104,16 @@ export const xiotboxPlugin = {
                 );
                 runningSnapshotText = partialSnapshotText;
                 const now = Date.now();
-                if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-                if (partialSnapshotText === lastStreamText) return;
-                lastStreamAt = now;
-                lastStreamText = partialSnapshotText;
+                if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+                if (partialSnapshotText === lastTextStreamText) return;
+                lastTextStreamAt = now;
+                lastTextStreamText = partialSnapshotText;
                 chunkSeq += 1;
                 client.sendMessage('COMMAND_RESULT', {
                   command_id: cmdId,
                   status: 'running',
                   trace_id: traceId,
                   result: buildEncryptedResult(partialSnapshotText, chunkSeq, null, {
-                    thinking: thinkingSnapshotText,
                     progress: progressSnapshotText,
                     lane: 'text',
                   }),
@@ -2268,10 +2301,7 @@ export const xiotboxPlugin = {
             command_id: cmdId,
             status: 'success',
             trace_id: traceId,
-            result: buildEncryptedResult(resolvedFinalText, chunkSeq, sessionUsageSnapshot, {
-              thinking: thinkingSnapshotText,
-              lane: 'final',
-            }),
+            result: buildEncryptedResult(resolvedFinalText, chunkSeq, sessionUsageSnapshot),
           };
           client.sendMessage('COMMAND_RESULT', successPayload);
           setCached(cmdId, successPayload);
