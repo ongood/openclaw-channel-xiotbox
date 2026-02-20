@@ -112,6 +112,24 @@ function normalizePositiveInt(value) {
     const rounded = Math.floor(parsed);
     return rounded >= 0 ? rounded : undefined;
 }
+function normalizeOptionalBoolean(value) {
+    if (typeof value === 'boolean')
+        return value;
+    if (typeof value === 'number') {
+        if (value === 1)
+            return true;
+        if (value === 0)
+            return false;
+    }
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['1', 'true', 'yes', 'on'].includes(normalized))
+            return true;
+        if (['0', 'false', 'no', 'off'].includes(normalized))
+            return false;
+    }
+    return undefined;
+}
 function resolveHomeDir() {
     const explicit = String(process.env.OPENCLAW_HOME || '').trim();
     const fallback = String(process.env.HOME || os.homedir() || process.cwd()).trim() || process.cwd();
@@ -211,6 +229,10 @@ function getChannelConfig(cfg) {
 function buildConfig(channelCfg) {
     const progressThrottleMs = normalizePositiveInt(channelCfg.PROGRESS_THROTTLE_MS);
     const progressMaxUpdates = normalizePositiveInt(channelCfg.PROGRESS_MAX_UPDATES);
+    const streamingEnabled = normalizeOptionalBoolean(channelCfg.STREAMING) ?? false;
+    const blockStreamingEnabled = normalizeOptionalBoolean(channelCfg.BLOCK_STREAMING) ??
+        normalizeOptionalBoolean(channelCfg.blockStreaming) ??
+        streamingEnabled;
     return {
         GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || 'ws://localhost:9002/ws/openclaw',
         DEVICE_ID: channelCfg.DEVICE_ID,
@@ -220,7 +242,8 @@ function buildConfig(channelCfg) {
         OUTBOX_TTL_MS: channelCfg.OUTBOX_TTL_MS || 5 * 60 * 1000,
         COMMAND_CACHE_TTL_MS: channelCfg.COMMAND_CACHE_TTL_MS || DEFAULT_CACHE_TTL_MS,
         COMMAND_CACHE_MAX: channelCfg.COMMAND_CACHE_MAX || DEFAULT_CACHE_MAX,
-        STREAMING: channelCfg.STREAMING || false,
+        STREAMING: streamingEnabled,
+        BLOCK_STREAMING: blockStreamingEnabled,
         STREAM_THROTTLE_MS: channelCfg.STREAM_THROTTLE_MS || DEFAULT_STREAM_THROTTLE_MS,
         PROGRESS_UPDATES: channelCfg.PROGRESS_UPDATES !== false,
         PROGRESS_THROTTLE_MS: progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS,
@@ -1238,7 +1261,7 @@ export const xiotboxPlugin = {
         threads: true,
         media: false,
         nativeCommands: false,
-        blockStreaming: false,
+        blockStreaming: true,
         outbound: false,
     },
     reload: { configPrefixes: ['channels.xiotbox'] },
@@ -1714,13 +1737,19 @@ export const xiotboxPlugin = {
                                 log?.warn?.(`[XiotBox] OpenClaw deliver error kind=${info?.kind || 'unknown'} err=${err?.message || err}`);
                             },
                         });
+                        const runtimeReplyOptions = {
+                            ...replyOptions,
+                            disableBlockStreaming: typeof finalCfg.BLOCK_STREAMING === 'boolean'
+                                ? !finalCfg.BLOCK_STREAMING
+                                : undefined,
+                        };
                         const finalized = finalizeCtx(inboundCtx);
                         dispatchMeta = await dispatchFromConfig({
                             ctx: finalized,
                             cfg: effectiveConfig,
                             dispatcher,
                             replyResolver: null,
-                            replyOptions,
+                            replyOptions: runtimeReplyOptions,
                         });
                         await dispatcher.waitForIdle();
                         markDispatchIdle();

@@ -458,6 +458,7 @@ Bridge 模式不再依赖 `.env` 里的敏感环境变量，统一使用本地�
     "COMMAND_CACHE_TTL_MS": 600000,
     "COMMAND_CACHE_MAX": 500,
     "STREAMING": false,
+    "BLOCK_STREAMING": false,
     "STREAM_THROTTLE_MS": 500,
     "PROGRESS_UPDATES": true,
     "PROGRESS_THROTTLE_MS": 1500,
