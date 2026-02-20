@@ -6,7 +6,7 @@ import { getXiotboxRuntime } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;
-const DEFAULT_STREAM_THROTTLE_MS = 120;
+const DEFAULT_STREAM_THROTTLE_MS = 35;
 const DEFAULT_PROGRESS_THROTTLE_MS = 1500;
 const DEFAULT_PROGRESS_MAX_UPDATES = 12;
 const DEFAULT_ACCOUNT_ID = 'default';
