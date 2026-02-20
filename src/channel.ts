@@ -1761,6 +1761,7 @@ export const xiotboxPlugin = {
           let finalText = '';
           const blockParts: string[] = [];
           let lastStreamAt = 0;
+          let lastStreamText = '';
           let chunkSeq = 0;
           let lastProgressAt = 0;
           let progressUpdateCount = 0;
@@ -1892,7 +1893,9 @@ export const xiotboxPlugin = {
 
             const now = Date.now();
             if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+            if (replyText === lastStreamText) return;
             lastStreamAt = now;
+            lastStreamText = replyText;
 
             chunkSeq += 1;
             client.sendMessage('COMMAND_RESULT', {
@@ -1935,6 +1938,23 @@ export const xiotboxPlugin = {
                 typeof finalCfg.BLOCK_STREAMING === 'boolean'
                   ? !finalCfg.BLOCK_STREAMING
                   : undefined,
+              onPartialReply: (payload: any) => {
+                if (!finalCfg.STREAMING) return;
+                const partialText = normalizeTextPayload(payload);
+                if (!partialText) return;
+                const now = Date.now();
+                if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+                if (partialText === lastStreamText) return;
+                lastStreamAt = now;
+                lastStreamText = partialText;
+                chunkSeq += 1;
+                client.sendMessage('COMMAND_RESULT', {
+                  command_id: cmdId,
+                  status: 'running',
+                  trace_id: traceId,
+                  result: buildEncryptedResult(partialText, chunkSeq),
+                });
+              },
             };
 
             const finalized = finalizeCtx(inboundCtx);
