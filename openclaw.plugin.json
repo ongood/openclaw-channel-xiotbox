@@ -1,6 +1,6 @@
 {
     "id": "xiotbox",
-    "version": "1.0.56",
+    "version": "1.0.57",
     "channels": [
         "xiotbox"
     ],
@@ -42,6 +42,15 @@
                 "type": "boolean"
             },
             "STREAM_THROTTLE_MS": {
+                "type": "number"
+            },
+            "PROGRESS_UPDATES": {
+                "type": "boolean"
+            },
+            "PROGRESS_THROTTLE_MS": {
+                "type": "number"
+            },
+            "PROGRESS_MAX_UPDATES": {
                 "type": "number"
             },
             "API_BASE_URL": {

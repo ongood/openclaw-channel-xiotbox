@@ -7,6 +7,8 @@ import { OpenClawE2E } from './e2e.js';
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 500;
 const DEFAULT_STREAM_THROTTLE_MS = 500;
+const DEFAULT_PROGRESS_THROTTLE_MS = 1500;
+const DEFAULT_PROGRESS_MAX_UPDATES = 12;
 const DEFAULT_ACCOUNT_ID = 'default';
 const DEFAULT_AGENT_ID = 'main';
 const DEFAULT_THREAD_ID = 'main';
@@ -207,6 +209,8 @@ function getChannelConfig(cfg) {
     return cfg?.channels?.[CHANNEL_ID] || {};
 }
 function buildConfig(channelCfg) {
+    const progressThrottleMs = normalizePositiveInt(channelCfg.PROGRESS_THROTTLE_MS);
+    const progressMaxUpdates = normalizePositiveInt(channelCfg.PROGRESS_MAX_UPDATES);
     return {
         GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || 'ws://localhost:9002/ws/openclaw',
         DEVICE_ID: channelCfg.DEVICE_ID,
@@ -218,6 +222,9 @@ function buildConfig(channelCfg) {
         COMMAND_CACHE_MAX: channelCfg.COMMAND_CACHE_MAX || DEFAULT_CACHE_MAX,
         STREAMING: channelCfg.STREAMING || false,
         STREAM_THROTTLE_MS: channelCfg.STREAM_THROTTLE_MS || DEFAULT_STREAM_THROTTLE_MS,
+        PROGRESS_UPDATES: channelCfg.PROGRESS_UPDATES !== false,
+        PROGRESS_THROTTLE_MS: progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS,
+        PROGRESS_MAX_UPDATES: progressMaxUpdates ?? DEFAULT_PROGRESS_MAX_UPDATES,
         API_BASE_URL: channelCfg.API_BASE_URL,
         E2E_KEY_PATH: channelCfg.E2E_KEY_PATH,
         E2E_ROTATE: channelCfg.E2E_ROTATE,
@@ -1033,6 +1040,183 @@ function hasInProgressSignal(outPayload) {
     }
     return false;
 }
+function compactProgressText(value, maxLen = 80) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text)
+        return '';
+    return text.length > maxLen ? `${text.slice(0, Math.max(0, maxLen - 1))}…` : text;
+}
+function normalizeProgressPercent(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        if (value >= 0 && value <= 1)
+            return Math.round(value * 100);
+        if (value >= 0 && value <= 100)
+            return Math.round(value);
+        return undefined;
+    }
+    if (typeof value === 'string') {
+        const compact = value.trim();
+        if (!compact)
+            return undefined;
+        const percentMatch = compact.match(/(-?\d+(?:\.\d+)?)\s*%/);
+        if (percentMatch) {
+            const parsed = Number(percentMatch[1]);
+            if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) {
+                return Math.round(parsed);
+            }
+            return undefined;
+        }
+        const parsed = Number(compact);
+        if (Number.isFinite(parsed)) {
+            if (parsed >= 0 && parsed <= 1 && compact.includes('.')) {
+                return Math.round(parsed * 100);
+            }
+            if (parsed >= 0 && parsed <= 100) {
+                return Math.round(parsed);
+            }
+        }
+        return undefined;
+    }
+    if (value && typeof value === 'object') {
+        const current = normalizePositiveInt(value.current ??
+            value.done ??
+            value.completed ??
+            value.step ??
+            value.processed);
+        const total = normalizePositiveInt(value.total ??
+            value.max ??
+            value.steps ??
+            value.count);
+        if (current != null && total != null && total > 0) {
+            const ratio = (current / total) * 100;
+            const bounded = Math.max(0, Math.min(100, Math.round(ratio)));
+            return bounded;
+        }
+    }
+    return undefined;
+}
+function extractProgressSnapshot(outPayload) {
+    if (!outPayload || typeof outPayload !== 'object')
+        return null;
+    const snapshot = {};
+    const visited = new Set();
+    const stack = [outPayload];
+    let depth = 0;
+    while (stack.length && depth < 250) {
+        depth += 1;
+        const current = stack.pop();
+        if (!current || typeof current !== 'object')
+            continue;
+        if (visited.has(current))
+            continue;
+        visited.add(current);
+        for (const [rawKey, value] of Object.entries(current)) {
+            const key = String(rawKey || '').toLowerCase();
+            const keyHasProgressHint = key.includes('progress') || key.includes('percent') || key.includes('pct');
+            const keyIsStatus = key === 'status' ||
+                key === 'state' ||
+                key === 'phase' ||
+                key.endsWith('_status') ||
+                key.endsWith('_state');
+            const keyIsStage = key === 'stage' ||
+                key === 'step' ||
+                key === 'task' ||
+                key.endsWith('_stage') ||
+                key.endsWith('_step');
+            const keyIsDetail = key === 'detail' ||
+                key === 'message' ||
+                key === 'summary' ||
+                key === 'title' ||
+                key === 'reason' ||
+                key.endsWith('_detail');
+            if (snapshot.progressPercent == null && (keyHasProgressHint || key === 'current' || key === 'total')) {
+                const percent = normalizeProgressPercent(value);
+                if (percent != null) {
+                    snapshot.progressPercent = percent;
+                }
+            }
+            if (typeof value === 'string') {
+                const compact = compactProgressText(value);
+                if (!compact)
+                    continue;
+                if (!snapshot.status && (keyIsStatus || (keyHasProgressHint && isLikelyInProgressText(compact)))) {
+                    snapshot.status = compact;
+                    continue;
+                }
+                if (!snapshot.stage && keyIsStage) {
+                    snapshot.stage = compact;
+                    continue;
+                }
+                if (!snapshot.detail && keyIsDetail && compact.length <= 80) {
+                    snapshot.detail = compact;
+                    continue;
+                }
+                if (!snapshot.status && isLikelyInProgressText(compact) && compact.length <= 80) {
+                    snapshot.status = compact;
+                }
+            }
+            else if (Array.isArray(value)) {
+                for (const item of value)
+                    stack.push(item);
+            }
+            else if (value && typeof value === 'object') {
+                if (snapshot.progressPercent == null && (key === 'progress' || keyHasProgressHint)) {
+                    const percent = normalizeProgressPercent(value);
+                    if (percent != null) {
+                        snapshot.progressPercent = percent;
+                    }
+                }
+                stack.push(value);
+            }
+        }
+    }
+    if (snapshot.status == null &&
+        snapshot.stage == null &&
+        snapshot.detail == null &&
+        snapshot.progressPercent == null) {
+        return null;
+    }
+    return snapshot;
+}
+function buildProgressRunningText(params) {
+    const uniqTools = Array.from(new Set((params.toolNames || [])
+        .map((name) => compactProgressText(name, 48))
+        .filter(Boolean)));
+    const snapshot = params.snapshot;
+    const segments = [];
+    if (snapshot?.stage)
+        segments.push(snapshot.stage);
+    if (snapshot?.status)
+        segments.push(snapshot.status);
+    if (snapshot?.progressPercent != null)
+        segments.push(`${snapshot.progressPercent}%`);
+    if (!segments.length && snapshot?.detail)
+        segments.push(snapshot.detail);
+    if (!segments.length && uniqTools.length)
+        segments.push(uniqTools.join(', '));
+    const fallbackText = compactProgressText(params.fallbackText, 80);
+    if (!segments.length && fallbackText && isLikelyInProgressText(fallbackText)) {
+        segments.push(fallbackText);
+    }
+    if (!segments.length)
+        return '正在执行，请稍候…';
+    return `正在执行：${segments.join(' · ')}`;
+}
+function buildProgressFingerprint(params) {
+    const uniqTools = Array.from(new Set((params.toolNames || [])
+        .map((name) => String(name || '').trim().toLowerCase())
+        .filter(Boolean))).sort();
+    const snapshot = params.snapshot;
+    return [
+        `k=${String(params.kind || '').trim() || '-'}`,
+        `tools=${uniqTools.join(',') || '-'}`,
+        `status=${(snapshot?.status || '').toLowerCase().trim() || '-'}`,
+        `stage=${(snapshot?.stage || '').toLowerCase().trim() || '-'}`,
+        `detail=${(snapshot?.detail || '').toLowerCase().trim() || '-'}`,
+        `progress=${snapshot?.progressPercent ?? '-'}`,
+        `text=${compactProgressText(params.fallbackText, 48).toLowerCase() || '-'}`,
+    ].join('|');
+}
 function summarizeToolSignals(outPayload) {
     const uniq = extractToolSignalNames(outPayload);
     if (!uniq.length)
@@ -1385,8 +1569,39 @@ export const xiotboxPlugin = {
                     const blockParts = [];
                     let lastStreamAt = 0;
                     let chunkSeq = 0;
+                    let lastProgressAt = 0;
+                    let progressUpdateCount = 0;
+                    let lastProgressFingerprint = '';
                     let dispatchMeta = null;
                     const skipEvents = [];
+                    const emitRunningUpdate = (runningText, fingerprint, opts) => {
+                        if (!finalCfg.PROGRESS_UPDATES)
+                            return;
+                        const textPayload = compactProgressText(runningText, 180);
+                        if (!textPayload)
+                            return;
+                        const now = Date.now();
+                        const isForce = opts?.force === true;
+                        if (!isForce) {
+                            if (progressUpdateCount >= finalCfg.PROGRESS_MAX_UPDATES)
+                                return;
+                            if (fingerprint && fingerprint === lastProgressFingerprint)
+                                return;
+                            if (now - lastProgressAt < finalCfg.PROGRESS_THROTTLE_MS)
+                                return;
+                        }
+                        progressUpdateCount += 1;
+                        lastProgressAt = now;
+                        if (fingerprint)
+                            lastProgressFingerprint = fingerprint;
+                        chunkSeq += 1;
+                        client.sendMessage('COMMAND_RESULT', {
+                            command_id: cmdId,
+                            status: 'running',
+                            trace_id: traceId,
+                            result: buildEncryptedResult(textPayload, chunkSeq),
+                        });
+                    };
                     // Signals to avoid "empty success"
                     let sawAnyDeliver = false;
                     let sawToolLikeDeliver = false;
@@ -1409,12 +1624,30 @@ export const xiotboxPlugin = {
                                 }
                             }
                         }
-                        if (hasInProgressSignal(outPayload)) {
+                        const payloadInProgressSignal = hasInProgressSignal(outPayload);
+                        if (payloadInProgressSignal) {
                             sawInProgressSignal = true;
                         }
                         const replyText = normalizeTextPayload(outPayload);
-                        if (replyText && isLikelyInProgressText(replyText)) {
+                        const replyLooksInProgress = Boolean(replyText && isLikelyInProgressText(replyText));
+                        if (replyLooksInProgress) {
                             sawInProgressSignal = true;
+                        }
+                        const progressSnapshot = extractProgressSnapshot(outPayload);
+                        const shouldEmitProgressUpdate = kind !== 'final' &&
+                            (hasTool || payloadInProgressSignal || progressSnapshot != null || replyLooksInProgress) &&
+                            (!replyText || replyLooksInProgress);
+                        if (shouldEmitProgressUpdate) {
+                            emitRunningUpdate(buildProgressRunningText({
+                                toolNames: toolNamesSeen,
+                                snapshot: progressSnapshot,
+                                fallbackText: replyText,
+                            }), buildProgressFingerprint({
+                                kind,
+                                toolNames: toolNamesSeen,
+                                snapshot: progressSnapshot,
+                                fallbackText: replyText,
+                            }));
                         }
                         const keysPresent = outPayload && typeof outPayload === 'object'
                             ? Object.keys(outPayload).sort()
@@ -1462,6 +1695,7 @@ export const xiotboxPlugin = {
                         });
                     };
                     const effectiveConfig = forceTextOnly ? buildTextOnlyConfig(fullConfig) : fullConfig;
+                    emitRunningUpdate('已接收指令，正在执行…', 'phase:accepted', { force: true });
                     // Prefer deterministic dispatch path that waits for all queued deliveries before finalizing.
                     const replyApi = runtime?.channel?.reply;
                     const createDispatcher = replyApi?.createReplyDispatcherWithTyping;

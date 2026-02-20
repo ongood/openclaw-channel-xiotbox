@@ -113,6 +113,63 @@ function shouldCountFallback(needsFallback, sawInProgressSignal) {
   return Boolean(needsFallback && !sawInProgressSignal);
 }
 
+function compactProgressText(value, maxLen = 80) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > maxLen ? `${text.slice(0, Math.max(0, maxLen - 1))}…` : text;
+}
+
+function normalizeProgressPercent(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value >= 0 && value <= 1) return Math.round(value * 100);
+    if (value >= 0 && value <= 100) return Math.round(value);
+    return undefined;
+  }
+  if (typeof value === 'string') {
+    const compact = value.trim();
+    if (!compact) return undefined;
+    const percentMatch = compact.match(/(-?\d+(?:\.\d+)?)\s*%/);
+    if (percentMatch) {
+      const parsed = Number(percentMatch[1]);
+      if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) {
+        return Math.round(parsed);
+      }
+      return undefined;
+    }
+    const parsed = Number(compact);
+    if (Number.isFinite(parsed)) {
+      if (parsed >= 0 && parsed <= 1 && compact.includes('.')) return Math.round(parsed * 100);
+      if (parsed >= 0 && parsed <= 100) return Math.round(parsed);
+    }
+    return undefined;
+  }
+  if (value && typeof value === 'object') {
+    const current = Number(value.current ?? value.done ?? value.completed ?? value.step ?? value.processed);
+    const total = Number(value.total ?? value.max ?? value.steps ?? value.count);
+    if (Number.isFinite(current) && Number.isFinite(total) && total > 0 && current >= 0) {
+      return Math.max(0, Math.min(100, Math.round((current / total) * 100)));
+    }
+  }
+  return undefined;
+}
+
+function buildProgressRunningText(params) {
+  const uniqTools = Array.from(new Set((params.toolNames || []).map((name) => compactProgressText(name, 48)).filter(Boolean)));
+  const snapshot = params.snapshot || null;
+  const segments = [];
+  if (snapshot?.stage) segments.push(snapshot.stage);
+  if (snapshot?.status) segments.push(snapshot.status);
+  if (snapshot?.progressPercent != null) segments.push(`${snapshot.progressPercent}%`);
+  if (!segments.length && snapshot?.detail) segments.push(snapshot.detail);
+  if (!segments.length && uniqTools.length) segments.push(uniqTools.join(', '));
+  const fallbackText = compactProgressText(params.fallbackText, 80);
+  if (!segments.length && fallbackText && /progress|running|执行中|处理中/i.test(fallbackText)) {
+    segments.push(fallbackText);
+  }
+  if (!segments.length) return '正在执行，请稍候…';
+  return `正在执行：${segments.join(' · ')}`;
+}
+
 // ── Test harness ──
 let passed = 0;
 let failed = 0;
@@ -278,6 +335,33 @@ test('Full flow: 3 consecutive tool-only then auto-reset, then normal resumes', 
   assert(outputs[1] === 'tool_summary', 'msg 2: tool summary');
   assert(outputs[2] === 'auto_reset_with_warning', 'msg 3: auto reset with warning');
   assert(outputs[3] === 'normal_text', 'msg 4: normal text');
+});
+
+test('normalizeProgressPercent handles numeric/string/object values', () => {
+  assert(normalizeProgressPercent(0.32) === 32, 'ratio number');
+  assert(normalizeProgressPercent(88) === 88, 'integer percent');
+  assert(normalizeProgressPercent('56%') === 56, 'percent string');
+  assert(normalizeProgressPercent({ current: 2, total: 5 }) === 40, 'progress object');
+  assert(normalizeProgressPercent('abc') === undefined, 'invalid string');
+});
+
+test('buildProgressRunningText prefers stage/status/percent', () => {
+  const text = buildProgressRunningText({
+    toolNames: ['xiotbox_control'],
+    snapshot: { stage: '拉起本地Core', status: 'running', progressPercent: 35 },
+  });
+  assert(
+    text === '正在执行：拉起本地Core · running · 35%',
+    'stage+status+percent',
+  );
+});
+
+test('buildProgressRunningText falls back to tool names', () => {
+  const text = buildProgressRunningText({
+    toolNames: ['xiotbox_control', 'xiotbox_control', 'bash'],
+    snapshot: null,
+  });
+  assert(text === '正在执行：xiotbox_control, bash', 'tool-name fallback');
 });
 
 // ── Summary ──
