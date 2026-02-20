@@ -138,8 +138,8 @@ function defaultConfig(): ConfigFileShape {
       OUTBOX_TTL_MS: 5 * 60 * 1000,
       COMMAND_CACHE_TTL_MS: 10 * 60 * 1000,
       COMMAND_CACHE_MAX: 500,
-      STREAMING: false,
-      STREAM_THROTTLE_MS: 500,
+      STREAMING: true,
+      STREAM_THROTTLE_MS: 35,
 
       API_BASE_URL: '',
       E2E_KEY_PATH: '',
