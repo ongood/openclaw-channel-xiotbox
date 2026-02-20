@@ -159,6 +159,14 @@ class WSSClient extends EventEmitter {
     startHeartbeat() {
         this.heartbeatInterval = setInterval(() => {
             this.sendMessage('HEARTBEAT', {
+                // Keep plugin_version fresh on server even when no reconnect/HELLO.
+                version: pkg.version,
+                runtime: {
+                    platform: process.platform,
+                    arch: process.arch,
+                    node_version: process.version,
+                    hostname: os.hostname()
+                },
                 uptime: process.uptime(),
                 memory: process.memoryUsage(),
                 cpu: process.cpuUsage()
