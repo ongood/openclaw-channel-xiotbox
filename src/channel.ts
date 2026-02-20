@@ -1762,12 +1762,31 @@ export const xiotboxPlugin = {
           const blockParts: string[] = [];
           let lastStreamAt = 0;
           let lastStreamText = '';
+          let runningSnapshotText = '';
           let chunkSeq = 0;
           let lastProgressAt = 0;
           let progressUpdateCount = 0;
           let lastProgressFingerprint = '';
           let dispatchMeta: { queuedFinal?: boolean; counts?: Record<string, number> } | null = null;
           const skipEvents: Array<{ kind: string; reason: string }> = [];
+
+          const mergeRunningSnapshot = (existingText: string, incomingText: string): string => {
+            const oldText = String(existingText || '');
+            const newText = String(incomingText || '');
+            if (!newText) return oldText;
+            if (!oldText) return newText;
+            if (newText === oldText) return oldText;
+            if (newText.startsWith(oldText)) return newText;
+            if (oldText.startsWith(newText)) return oldText;
+
+            const maxOverlap = Math.min(oldText.length, newText.length);
+            for (let i = maxOverlap; i >= 1; i -= 1) {
+              if (oldText.slice(oldText.length - i) === newText.slice(0, i)) {
+                return oldText + newText.slice(i);
+              }
+            }
+            return oldText + newText;
+          };
 
           const emitRunningUpdate = (
             runningText: string,
@@ -1891,18 +1910,24 @@ export const xiotboxPlugin = {
             // Only stream block replies to avoid leaking tool payloads to the chat UI.
             if (kind !== 'block') return;
 
+            const blockSnapshotText = mergeRunningSnapshot(
+              runningSnapshotText,
+              blockParts.join('\n'),
+            );
+            runningSnapshotText = blockSnapshotText;
+
             const now = Date.now();
             if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-            if (replyText === lastStreamText) return;
+            if (blockSnapshotText === lastStreamText) return;
             lastStreamAt = now;
-            lastStreamText = replyText;
+            lastStreamText = blockSnapshotText;
 
             chunkSeq += 1;
             client.sendMessage('COMMAND_RESULT', {
               command_id: cmdId,
               status: 'running',
               trace_id: traceId,
-              result: buildEncryptedResult(replyText, chunkSeq),
+              result: buildEncryptedResult(blockSnapshotText, chunkSeq),
             });
           };
 
@@ -1942,17 +1967,22 @@ export const xiotboxPlugin = {
                 if (!finalCfg.STREAMING) return;
                 const partialText = normalizeTextPayload(payload);
                 if (!partialText) return;
+                const partialSnapshotText = mergeRunningSnapshot(
+                  runningSnapshotText,
+                  partialText,
+                );
+                runningSnapshotText = partialSnapshotText;
                 const now = Date.now();
                 if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-                if (partialText === lastStreamText) return;
+                if (partialSnapshotText === lastStreamText) return;
                 lastStreamAt = now;
-                lastStreamText = partialText;
+                lastStreamText = partialSnapshotText;
                 chunkSeq += 1;
                 client.sendMessage('COMMAND_RESULT', {
                   command_id: cmdId,
                   status: 'running',
                   trace_id: traceId,
-                  result: buildEncryptedResult(partialText, chunkSeq),
+                  result: buildEncryptedResult(partialSnapshotText, chunkSeq),
                 });
               },
             };
