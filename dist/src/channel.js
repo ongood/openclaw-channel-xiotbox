@@ -1434,7 +1434,7 @@ export const xiotboxPlugin = {
                         setCached(cmdId, failPayload);
                         return;
                     }
-                    const buildEncryptedResult = (replyText, seq, sessionUsage) => {
+                    const buildEncryptedResult = (replyText, seq, sessionUsage, streamMeta) => {
                         const e2eMulti = {};
                         let primaryEnv = null;
                         let primaryKeyId = '';
@@ -1466,6 +1466,21 @@ export const xiotboxPlugin = {
                             content_type: contentType,
                             chunk_seq: seq,
                         };
+                        if (streamMeta) {
+                            const metadata = {};
+                            if (typeof streamMeta.lane === 'string' && streamMeta.lane.trim()) {
+                                metadata.stream_lane = streamMeta.lane.trim();
+                            }
+                            if (typeof streamMeta.thinking === 'string' && streamMeta.thinking.trim()) {
+                                metadata.stream_thinking = streamMeta.thinking;
+                            }
+                            if (typeof streamMeta.progress === 'string' && streamMeta.progress.trim()) {
+                                metadata.stream_progress = streamMeta.progress;
+                            }
+                            if (Object.keys(metadata).length) {
+                                result.metadata = metadata;
+                            }
+                        }
                         if (sessionUsage) {
                             result.session_usage = {
                                 total_tokens: sessionUsage.totalTokens,
@@ -1593,6 +1608,8 @@ export const xiotboxPlugin = {
                     let lastStreamAt = 0;
                     let lastStreamText = '';
                     let runningSnapshotText = '';
+                    let thinkingSnapshotText = '';
+                    let progressSnapshotText = '';
                     let chunkSeq = 0;
                     let lastProgressAt = 0;
                     let progressUpdateCount = 0;
@@ -1640,12 +1657,18 @@ export const xiotboxPlugin = {
                         lastProgressAt = now;
                         if (fingerprint)
                             lastProgressFingerprint = fingerprint;
+                        progressSnapshotText = textPayload;
                         chunkSeq += 1;
+                        const stableText = runningSnapshotText || lastStreamText || '';
                         client.sendMessage('COMMAND_RESULT', {
                             command_id: cmdId,
                             status: 'running',
                             trace_id: traceId,
-                            result: buildEncryptedResult(textPayload, chunkSeq),
+                            result: buildEncryptedResult(stableText, chunkSeq, null, {
+                                progress: progressSnapshotText,
+                                thinking: thinkingSnapshotText,
+                                lane: 'progress',
+                            }),
                         });
                     };
                     // Signals to avoid "empty success"
@@ -1750,7 +1773,11 @@ export const xiotboxPlugin = {
                             command_id: cmdId,
                             status: 'running',
                             trace_id: traceId,
-                            result: buildEncryptedResult(blockSnapshotText, chunkSeq),
+                            result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
+                                thinking: thinkingSnapshotText,
+                                progress: progressSnapshotText,
+                                lane: 'text',
+                            }),
                         });
                     };
                     const effectiveConfig = forceTextOnly ? buildTextOnlyConfig(fullConfig) : fullConfig;
@@ -1802,7 +1829,37 @@ export const xiotboxPlugin = {
                                     command_id: cmdId,
                                     status: 'running',
                                     trace_id: traceId,
-                                    result: buildEncryptedResult(blockSnapshotText, chunkSeq),
+                                    result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
+                                        thinking: thinkingSnapshotText,
+                                        progress: progressSnapshotText,
+                                        lane: 'text',
+                                    }),
+                                });
+                            },
+                            onReasoningStream: (payload) => {
+                                if (!finalCfg.STREAMING)
+                                    return;
+                                const reasoningText = typeof payload === 'string'
+                                    ? payload
+                                    : payload?.text || payload?.thinking || normalizeTextPayload(payload);
+                                if (!reasoningText)
+                                    return;
+                                thinkingSnapshotText = mergeRunningSnapshot(thinkingSnapshotText, reasoningText);
+                                const now = Date.now();
+                                if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS)
+                                    return;
+                                lastStreamAt = now;
+                                chunkSeq += 1;
+                                const stableText = runningSnapshotText || lastStreamText || '';
+                                client.sendMessage('COMMAND_RESULT', {
+                                    command_id: cmdId,
+                                    status: 'running',
+                                    trace_id: traceId,
+                                    result: buildEncryptedResult(stableText, chunkSeq, null, {
+                                        thinking: thinkingSnapshotText,
+                                        progress: progressSnapshotText,
+                                        lane: 'thinking',
+                                    }),
                                 });
                             },
                             onPartialReply: (payload) => {
@@ -1825,7 +1882,11 @@ export const xiotboxPlugin = {
                                     command_id: cmdId,
                                     status: 'running',
                                     trace_id: traceId,
-                                    result: buildEncryptedResult(partialSnapshotText, chunkSeq),
+                                    result: buildEncryptedResult(partialSnapshotText, chunkSeq, null, {
+                                        thinking: thinkingSnapshotText,
+                                        progress: progressSnapshotText,
+                                        lane: 'text',
+                                    }),
                                 });
                             },
                         };
@@ -1998,7 +2059,10 @@ export const xiotboxPlugin = {
                         command_id: cmdId,
                         status: 'success',
                         trace_id: traceId,
-                        result: buildEncryptedResult(resolvedFinalText, chunkSeq, sessionUsageSnapshot),
+                        result: buildEncryptedResult(resolvedFinalText, chunkSeq, sessionUsageSnapshot, {
+                            thinking: thinkingSnapshotText,
+                            lane: 'final',
+                        }),
                     };
                     client.sendMessage('COMMAND_RESULT', successPayload);
                     setCached(cmdId, successPayload);
