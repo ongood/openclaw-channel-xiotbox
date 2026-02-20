@@ -1865,6 +1865,7 @@ export const xiotboxPlugin = {
               trace_id: traceId,
               result: buildEncryptedResult(stableText, chunkSeq, null, {
                 progress: progressSnapshotText,
+                thinking: thinkingSnapshotText,
                 lane: 'progress',
               }),
             });
@@ -1988,6 +1989,7 @@ export const xiotboxPlugin = {
               trace_id: traceId,
               result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
                 progress: progressSnapshotText,
+                thinking: thinkingSnapshotText,
                 lane: 'text',
               }),
             });
@@ -2051,6 +2053,7 @@ export const xiotboxPlugin = {
                   trace_id: traceId,
                   result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
                     progress: progressSnapshotText,
+                    thinking: thinkingSnapshotText,
                     lane: 'text',
                   }),
                 });
@@ -2083,6 +2086,7 @@ export const xiotboxPlugin = {
                   trace_id: traceId,
                   result: buildEncryptedResult(reasoningSnapshotText, chunkSeq, null, {
                     progress: progressSnapshotText,
+                    thinking: thinkingSnapshotText,
                     lane: 'text',
                   }),
                 });
@@ -2115,6 +2119,7 @@ export const xiotboxPlugin = {
                   trace_id: traceId,
                   result: buildEncryptedResult(partialSnapshotText, chunkSeq, null, {
                     progress: progressSnapshotText,
+                    thinking: thinkingSnapshotText,
                     lane: 'text',
                   }),
                 });
@@ -2301,7 +2306,10 @@ export const xiotboxPlugin = {
             command_id: cmdId,
             status: 'success',
             trace_id: traceId,
-            result: buildEncryptedResult(resolvedFinalText, chunkSeq, sessionUsageSnapshot),
+            result: buildEncryptedResult(resolvedFinalText, chunkSeq, sessionUsageSnapshot, {
+              thinking: thinkingSnapshotText,
+              lane: 'final',
+            }),
           };
           client.sendMessage('COMMAND_RESULT', successPayload);
           setCached(cmdId, successPayload);
