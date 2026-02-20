@@ -1655,6 +1655,9 @@ export const xiotboxPlugin = {
                     let sawControlToolSignal = false;
                     let sawInProgressSignal = false;
                     const toolNamesSeen = [];
+                    // Prefer block streaming from runtime reply hooks when available.
+                    // Fallback runtimes still stream from `deliver(kind=block)`.
+                    let streamBlocksViaReplyOptions = false;
                     const deliver = async (outPayload, info) => {
                         const kind = info?.kind || 'block';
                         sawAnyDeliver = true;
@@ -1718,7 +1721,9 @@ export const xiotboxPlugin = {
                         }
                         lastText = replyText;
                         if (kind === 'block') {
-                            blockParts.push(replyText);
+                            if (!finalCfg.STREAMING || !streamBlocksViaReplyOptions) {
+                                blockParts.push(replyText);
+                            }
                         }
                         else if (kind === 'final') {
                             finalText = replyText;
@@ -1727,6 +1732,9 @@ export const xiotboxPlugin = {
                             return;
                         // Only stream block replies to avoid leaking tool payloads to the chat UI.
                         if (kind !== 'block')
+                            return;
+                        // When runtime onBlockReply is active, avoid duplicate running chunks.
+                        if (streamBlocksViaReplyOptions)
                             return;
                         const blockSnapshotText = mergeRunningSnapshot(runningSnapshotText, blockParts.join('\n'));
                         runningSnapshotText = blockSnapshotText;
@@ -1753,6 +1761,7 @@ export const xiotboxPlugin = {
                     const finalizeCtx = replyApi?.finalizeInboundContext;
                     const dispatchFromConfig = replyApi?.dispatchReplyFromConfig;
                     if (createDispatcher && finalizeCtx && dispatchFromConfig) {
+                        streamBlocksViaReplyOptions = true;
                         const { dispatcher, replyOptions, markDispatchIdle } = createDispatcher({
                             deliver,
                             onSkip: (_payload, info) => {
@@ -1770,6 +1779,32 @@ export const xiotboxPlugin = {
                             disableBlockStreaming: typeof finalCfg.BLOCK_STREAMING === 'boolean'
                                 ? !finalCfg.BLOCK_STREAMING
                                 : undefined,
+                            onBlockReply: (payload) => {
+                                if (!finalCfg.STREAMING)
+                                    return;
+                                const blockText = typeof payload === 'string'
+                                    ? payload
+                                    : payload?.text || normalizeTextPayload(payload);
+                                if (!blockText)
+                                    return;
+                                blockParts.push(blockText);
+                                const blockSnapshotText = mergeRunningSnapshot(runningSnapshotText, blockParts.join('\n'));
+                                runningSnapshotText = blockSnapshotText;
+                                const now = Date.now();
+                                if (now - lastStreamAt < finalCfg.STREAM_THROTTLE_MS)
+                                    return;
+                                if (blockSnapshotText === lastStreamText)
+                                    return;
+                                lastStreamAt = now;
+                                lastStreamText = blockSnapshotText;
+                                chunkSeq += 1;
+                                client.sendMessage('COMMAND_RESULT', {
+                                    command_id: cmdId,
+                                    status: 'running',
+                                    trace_id: traceId,
+                                    result: buildEncryptedResult(blockSnapshotText, chunkSeq),
+                                });
+                            },
                             onPartialReply: (payload) => {
                                 if (!finalCfg.STREAMING)
                                     return;
@@ -1905,6 +1940,14 @@ export const xiotboxPlugin = {
                             inProgress: sawInProgressSignal,
                         });
                         structuredLog('info', 'no_reply_to_summary');
+                    }
+                    // Ack-like final text is low-information for end users.
+                    // If tools were actually executed, show a concise tool summary instead.
+                    if (resolvedFinalText &&
+                        isLikelyNonSubstantiveAck(resolvedFinalText) &&
+                        toolNamesSeen.length > 0) {
+                        resolvedFinalText = buildToolSummary();
+                        structuredLog('info', 'ack_only_to_tool_summary');
                     }
                     // ── Consecutive tool-only counter: auto-fallback after MAX_CONSECUTIVE_TOOL_ONLY ──
                     if (shouldCountFallback) {
