@@ -1956,9 +1956,9 @@ export const xiotboxPlugin = {
 
             lastText = replyText;
             if (kind === 'block') {
-              if (!finalCfg.STREAMING || !streamBlocksViaReplyOptions) {
-                blockParts.push(replyText);
-              }
+              // 始终将 block 内容加入 blockParts，确保最终文本完整。
+              // onBlockReply 可能不会被触发（非流式响应），导致 blockParts 为空。
+              blockParts.push(replyText);
             } else if (kind === 'final') {
               finalText = replyText;
             }
@@ -2029,13 +2029,17 @@ export const xiotboxPlugin = {
                   ? !finalCfg.BLOCK_STREAMING
                   : undefined,
               onBlockReply: (payload: any) => {
+                console.log('[STREAM] onBlockReply fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
                 if (!finalCfg.STREAMING) return;
                 const blockText =
                   typeof payload === 'string'
                     ? payload
                     : payload?.text || normalizeTextPayload(payload);
                 if (!blockText) return;
-                blockParts.push(blockText);
+                // deliver 已 push 相同 block 时跳过，避免重复
+                if (!blockParts.includes(blockText)) {
+                  blockParts.push(blockText);
+                }
                 const blockSnapshotText = mergeRunningSnapshot(
                   runningSnapshotText,
                   blockParts.join('\n'),
@@ -2059,6 +2063,7 @@ export const xiotboxPlugin = {
                 });
               },
               onReasoningStream: (payload: any) => {
+                console.log('[STREAM] onReasoningStream fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
                 if (!finalCfg.STREAMING) return;
                 const reasoningText =
                   typeof payload === 'string'
@@ -2092,6 +2097,7 @@ export const xiotboxPlugin = {
                 });
               },
               onPartialReply: (payload: any) => {
+                console.log('[STREAM] onPartialReply fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
                 if (!finalCfg.STREAMING) return;
                 const reasoningText = normalizeReasoningPayload(payload);
                 if (reasoningText) {
