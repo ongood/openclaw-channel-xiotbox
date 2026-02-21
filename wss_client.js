@@ -327,21 +327,30 @@ class WSSClient extends EventEmitter {
     }
 
     /**
-     * 构建连接 URL（默认不在 query 中传 token，避免日志泄露）
+     * 构建连接 URL
+     * 默认路径: /ws/bot/{device_id}（Gateway bot 端点）
+     * 如果 USE_QUERY_AUTH=true，则把 token 放到 query 参数里
      */
     _buildWsUrl() {
-        const baseUrl = this.config.GATEWAY_WSS_URL;
+        let baseUrl = this.config.GATEWAY_WSS_URL;
+        const deviceId = this.config.DEVICE_ID;
+
+        // Auto-append device_id to path if URL ends with /ws/bot or /ws/bot/
+        if (deviceId && /\/ws\/bot\/?$/.test(baseUrl)) {
+            baseUrl = baseUrl.replace(/\/+$/, '') + '/' + encodeURIComponent(deviceId);
+        }
+
         if (!this.config.USE_QUERY_AUTH) {
             return baseUrl;
         }
         try {
             const urlObj = new URL(baseUrl);
-            urlObj.searchParams.set('device_id', this.config.DEVICE_ID);
+            urlObj.searchParams.set('device_id', deviceId);
             urlObj.searchParams.set('token', this.config.DEVICE_TOKEN);
             return urlObj.toString();
         } catch (err) {
             // fallback
-            return `${baseUrl}?device_id=${encodeURIComponent(this.config.DEVICE_ID)}&token=${encodeURIComponent(this.config.DEVICE_TOKEN)}`;
+            return `${baseUrl}?device_id=${encodeURIComponent(deviceId)}&token=${encodeURIComponent(this.config.DEVICE_TOKEN)}`;
         }
     }
 

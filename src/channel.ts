@@ -301,7 +301,7 @@ function buildConfig(channelCfg: any) {
     normalizeOptionalBoolean(channelCfg.blockStreaming) ??
     streamingEnabled;
   return {
-    GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || 'ws://localhost:9002/ws/openclaw',
+    GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || 'ws://localhost:9002/ws/bot',
     DEVICE_ID: channelCfg.DEVICE_ID,
     DEVICE_TOKEN: channelCfg.DEVICE_TOKEN,
     USE_QUERY_AUTH: channelCfg.USE_QUERY_AUTH || false,
@@ -1967,8 +1967,6 @@ export const xiotboxPlugin = {
 
             // Only stream block replies to avoid leaking tool payloads to the chat UI.
             if (kind !== 'block') return;
-            // When runtime onBlockReply is active, avoid duplicate running chunks.
-            if (streamBlocksViaReplyOptions) return;
 
             const blockSnapshotText = mergeRunningSnapshot(
               runningSnapshotText,
@@ -2036,6 +2034,12 @@ export const xiotboxPlugin = {
                     ? payload
                     : payload?.text || normalizeTextPayload(payload);
                 if (!blockText) return;
+                log?.debug?.(JSON.stringify({
+                  event: 'onBlockReply',
+                  trace_id: traceId || '',
+                  text_len: blockText.length,
+                  text_preview: blockText.slice(0, 60),
+                }));
                 // deliver 已 push 相同 block 时跳过，避免重复
                 if (!blockParts.includes(blockText)) {
                   blockParts.push(blockText);
@@ -2166,7 +2170,9 @@ export const xiotboxPlugin = {
           const toolOnlyLikely = sawToolLikeDeliver || sawNonTextDeliver;
           const isToolOnlyReply = !resolvedFinalText && toolOnlyLikely;
           const isNoReply = resolvedFinalText ? shouldSkipReply(resolvedFinalText) : false;
-          const isAckOnlyReply = resolvedFinalText
+          // When a control tool (xiotbox_control etc.) ran, the agent's short ack
+          // ("操作已完成", "done" …) IS the meaningful reply – don't replace it.
+          const isAckOnlyReply = resolvedFinalText && !sawControlToolSignal
             ? isLikelyNonSubstantiveAck(resolvedFinalText)
             : false;
           const needsFallback = isToolOnlyReply || isNoReply || !resolvedFinalText || isAckOnlyReply;
@@ -2308,6 +2314,11 @@ export const xiotboxPlugin = {
           }
 
           chunkSeq += 1;
+          structuredLog('debug', 'final_payload', {
+            thinking_len: thinkingSnapshotText.length,
+            thinking_preview: thinkingSnapshotText.slice(0, 120),
+            text_len: resolvedFinalText.length,
+          });
           const successPayload = {
             command_id: cmdId,
             status: 'success',
@@ -2320,6 +2331,7 @@ export const xiotboxPlugin = {
           client.sendMessage('COMMAND_RESULT', successPayload);
           setCached(cmdId, successPayload);
         } catch (err: any) {
+          console.error('[XiotBox] COMMAND handler error:', err?.message || err, err?.stack?.split('\n').slice(0, 3).join(' '));
           const cmdId = payload?.command_id;
           const traceId = payload?.trace_id || payload?.payload?.trace_id || null;
           if (!cmdId) return;
