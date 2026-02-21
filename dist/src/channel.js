@@ -234,7 +234,7 @@ function buildConfig(channelCfg) {
         normalizeOptionalBoolean(channelCfg.blockStreaming) ??
         streamingEnabled;
     return {
-        GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || 'ws://localhost:9002/ws/openclaw',
+        GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || 'ws://localhost:9002/ws/bot',
         DEVICE_ID: channelCfg.DEVICE_ID,
         DEVICE_TOKEN: channelCfg.DEVICE_TOKEN,
         USE_QUERY_AUTH: channelCfg.USE_QUERY_AUTH || false,

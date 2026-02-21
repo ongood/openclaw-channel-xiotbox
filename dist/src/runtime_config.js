@@ -42,7 +42,7 @@ function writeJsonFile(filePath, data) {
 function defaultConfig() {
     return {
         xiotbox: {
-            GATEWAY_WSS_URL: 'ws://localhost:8069/ws/openclaw',
+            GATEWAY_WSS_URL: 'ws://localhost:9002/ws/bot',
             GATEWAY_API_URL: '',
             USE_QUERY_AUTH: false,
             TENANT_ID: '',
@@ -64,7 +64,7 @@ function defaultConfig() {
         },
         bridge: {
             enabled: false,
-            endpoint: 'ws://localhost:8069/ws/openclaw',
+            endpoint: 'ws://localhost:9002/ws/bot',
             allowlist: ['127.0.0.1', 'localhost', '::1'],
             openclawHost: '127.0.0.1',
             openclawPort: 18789,
