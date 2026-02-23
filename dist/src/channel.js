@@ -1711,11 +1711,23 @@ export const xiotboxPlugin = {
                     const deliver = async (outPayload, info) => {
                         const kind = info?.kind || 'block';
                         sawAnyDeliver = true;
-                        const hasTool = detectToolSignals(outPayload);
+                        const isToolKind = kind === 'tool';
+                        const hasTool = isToolKind || detectToolSignals(outPayload);
                         if (hasTool) {
                             sawToolLikeDeliver = true;
                             // Collect tool names for summary
                             const toolNames = extractToolSignalNames(outPayload);
+                            // When kind=tool, the dispatcher sends tool summary text.
+                            // Try to extract tool name from the summary text if no structured names found.
+                            if (isToolKind && !toolNames.length) {
+                                const summaryText = normalizeTextPayload(outPayload);
+                                if (summaryText) {
+                                    const toolNameMatch = summaryText.match(/^(?:#+\s*)?(\S+)/);
+                                    if (toolNameMatch) {
+                                        toolNames.push(toolNameMatch[1].replace(/[:`]/g, ''));
+                                    }
+                                }
+                            }
                             if (toolNames.length) {
                                 toolNamesSeen.push(...toolNames);
                                 if (toolNames.some((name) => isLikelyControlToolName(name))) {
@@ -1735,7 +1747,7 @@ export const xiotboxPlugin = {
                         const progressSnapshot = extractProgressSnapshot(outPayload);
                         const shouldEmitProgressUpdate = kind !== 'final' &&
                             (hasTool || payloadInProgressSignal || progressSnapshot != null || replyLooksInProgress) &&
-                            (!replyText || replyLooksInProgress);
+                            (!replyText || replyLooksInProgress || isToolKind);
                         if (shouldEmitProgressUpdate) {
                             emitRunningUpdate(buildProgressRunningText({
                                 toolNames: toolNamesSeen,
