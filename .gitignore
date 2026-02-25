@@ -5,6 +5,7 @@ package-lock.json
 # 配置文件（包含敏感凭证）
 config.json
 .env
+.env.model
 
 # 日志
 *.log
