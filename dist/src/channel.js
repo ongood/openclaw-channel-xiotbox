@@ -1656,7 +1656,8 @@ export const xiotboxPlugin = {
                             return newText;
                         if (oldText.startsWith(newText))
                             return oldText;
-                        const maxOverlap = Math.min(oldText.length, newText.length);
+                        // Cap overlap search to avoid O(N²) stalls on long texts
+                        const maxOverlap = Math.min(oldText.length, newText.length, 512);
                         for (let i = maxOverlap; i >= 1; i -= 1) {
                             if (oldText.slice(oldText.length - i) === newText.slice(0, i)) {
                                 return oldText + newText.slice(i);
