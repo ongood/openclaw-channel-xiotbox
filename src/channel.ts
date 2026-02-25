@@ -2040,112 +2040,124 @@ export const xiotboxPlugin = {
                   ? !finalCfg.BLOCK_STREAMING
                   : undefined,
               onBlockReply: (payload: any) => {
-                console.log('[STREAM] onBlockReply fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
-                if (!finalCfg.STREAMING) return;
-                const blockText =
-                  typeof payload === 'string'
-                    ? payload
-                    : payload?.text || normalizeTextPayload(payload);
-                if (!blockText) return;
-                log?.debug?.(JSON.stringify({
-                  event: 'onBlockReply',
-                  trace_id: traceId || '',
-                  text_len: blockText.length,
-                  text_preview: blockText.slice(0, 60),
-                }));
-                // deliver 已 push 相同 block 时跳过，避免重复
-                if (!blockParts.includes(blockText)) {
-                  blockParts.push(blockText);
+                try {
+                  console.log('[STREAM] onBlockReply fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
+                  if (!finalCfg.STREAMING) return;
+                  const blockText =
+                    typeof payload === 'string'
+                      ? payload
+                      : payload?.text || normalizeTextPayload(payload);
+                  if (!blockText) return;
+                  log?.debug?.(JSON.stringify({
+                    event: 'onBlockReply',
+                    trace_id: traceId || '',
+                    text_len: blockText.length,
+                    text_preview: blockText.slice(0, 60),
+                  }));
+                  // deliver 已 push 相同 block 时跳过，避免重复
+                  if (!blockParts.includes(blockText)) {
+                    blockParts.push(blockText);
+                  }
+                  const blockSnapshotText = mergeRunningSnapshot(
+                    runningSnapshotText,
+                    blockParts.join('\n'),
+                  );
+                  runningSnapshotText = blockSnapshotText;
+                  const now = Date.now();
+                  if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+                  if (blockSnapshotText === lastTextStreamText) return;
+                  lastTextStreamAt = now;
+                  lastTextStreamText = blockSnapshotText;
+                  chunkSeq += 1;
+                  client.sendMessage('COMMAND_RESULT', {
+                    command_id: cmdId,
+                    status: 'running',
+                    trace_id: traceId,
+                    result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
+                      progress: progressSnapshotText,
+                      thinking: thinkingSnapshotText,
+                      lane: 'text',
+                    }),
+                  });
+                } catch (err) {
+                  console.error('[STREAM] onBlockReply error:', err);
                 }
-                const blockSnapshotText = mergeRunningSnapshot(
-                  runningSnapshotText,
-                  blockParts.join('\n'),
-                );
-                runningSnapshotText = blockSnapshotText;
-                const now = Date.now();
-                if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-                if (blockSnapshotText === lastTextStreamText) return;
-                lastTextStreamAt = now;
-                lastTextStreamText = blockSnapshotText;
-                chunkSeq += 1;
-                client.sendMessage('COMMAND_RESULT', {
-                  command_id: cmdId,
-                  status: 'running',
-                  trace_id: traceId,
-                  result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
-                    progress: progressSnapshotText,
-                    thinking: thinkingSnapshotText,
-                    lane: 'text',
-                  }),
-                });
               },
               onReasoningStream: (payload: any) => {
-                console.log('[STREAM] onReasoningStream fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
-                if (!finalCfg.STREAMING) return;
-                const reasoningText =
-                  typeof payload === 'string'
-                    ? payload
-                    : payload?.text || payload?.thinking || normalizeReasoningPayload(payload);
-                if (!reasoningText) return;
-                thinkingSnapshotText = mergeRunningSnapshot(
-                  thinkingSnapshotText,
-                  reasoningText,
-                );
-                const reasoningSnapshotText = mergeRunningSnapshot(
-                  runningSnapshotText,
-                  reasoningText,
-                );
-                runningSnapshotText = reasoningSnapshotText;
-                const now = Date.now();
-                if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-                if (reasoningSnapshotText === lastTextStreamText) return;
-                lastTextStreamAt = now;
-                lastTextStreamText = reasoningSnapshotText;
-                chunkSeq += 1;
-                client.sendMessage('COMMAND_RESULT', {
-                  command_id: cmdId,
-                  status: 'running',
-                  trace_id: traceId,
-                  result: buildEncryptedResult(reasoningSnapshotText, chunkSeq, null, {
-                    progress: progressSnapshotText,
-                    thinking: thinkingSnapshotText,
-                    lane: 'text',
-                  }),
-                });
-              },
-              onPartialReply: (payload: any) => {
-                console.log('[STREAM] onPartialReply fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
-                if (!finalCfg.STREAMING) return;
-                const reasoningText = normalizeReasoningPayload(payload);
-                if (reasoningText) {
+                try {
+                  console.log('[STREAM] onReasoningStream fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
+                  if (!finalCfg.STREAMING) return;
+                  const reasoningText =
+                    typeof payload === 'string'
+                      ? payload
+                      : payload?.text || payload?.thinking || normalizeReasoningPayload(payload);
+                  if (!reasoningText) return;
                   thinkingSnapshotText = mergeRunningSnapshot(
                     thinkingSnapshotText,
                     reasoningText,
                   );
+                  const reasoningSnapshotText = mergeRunningSnapshot(
+                    runningSnapshotText,
+                    reasoningText,
+                  );
+                  runningSnapshotText = reasoningSnapshotText;
+                  const now = Date.now();
+                  if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+                  if (reasoningSnapshotText === lastTextStreamText) return;
+                  lastTextStreamAt = now;
+                  lastTextStreamText = reasoningSnapshotText;
+                  chunkSeq += 1;
+                  client.sendMessage('COMMAND_RESULT', {
+                    command_id: cmdId,
+                    status: 'running',
+                    trace_id: traceId,
+                    result: buildEncryptedResult(reasoningSnapshotText, chunkSeq, null, {
+                      progress: progressSnapshotText,
+                      thinking: thinkingSnapshotText,
+                      lane: 'text',
+                    }),
+                  });
+                } catch (err) {
+                  console.error('[STREAM] onReasoningStream error:', err);
                 }
-                const partialText = normalizeTextPayload(payload);
-                if (!partialText) return;
-                const partialSnapshotText = mergeRunningSnapshot(
-                  runningSnapshotText,
-                  partialText,
-                );
-                runningSnapshotText = partialSnapshotText;
-                const now = Date.now();
-                if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
-                if (partialSnapshotText === lastTextStreamText) return;
-                lastTextStreamAt = now;
-                lastTextStreamText = partialSnapshotText;
-                chunkSeq += 1;
-                client.sendMessage('COMMAND_RESULT', {
-                  command_id: cmdId,
-                  status: 'running',
-                  trace_id: traceId,
-                  result: buildEncryptedResult(partialSnapshotText, chunkSeq, null, {
-                    progress: progressSnapshotText,
-                    thinking: thinkingSnapshotText,
-                    lane: 'text',
-                  }),
-                });
+              },
+              onPartialReply: (payload: any) => {
+                try {
+                  console.log('[STREAM] onPartialReply fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
+                  if (!finalCfg.STREAMING) return;
+                  const reasoningText = normalizeReasoningPayload(payload);
+                  if (reasoningText) {
+                    thinkingSnapshotText = mergeRunningSnapshot(
+                      thinkingSnapshotText,
+                      reasoningText,
+                    );
+                  }
+                  const partialText = normalizeTextPayload(payload);
+                  if (!partialText) return;
+                  const partialSnapshotText = mergeRunningSnapshot(
+                    runningSnapshotText,
+                    partialText,
+                  );
+                  runningSnapshotText = partialSnapshotText;
+                  const now = Date.now();
+                  if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS) return;
+                  if (partialSnapshotText === lastTextStreamText) return;
+                  lastTextStreamAt = now;
+                  lastTextStreamText = partialSnapshotText;
+                  chunkSeq += 1;
+                  client.sendMessage('COMMAND_RESULT', {
+                    command_id: cmdId,
+                    status: 'running',
+                    trace_id: traceId,
+                    result: buildEncryptedResult(partialSnapshotText, chunkSeq, null, {
+                      progress: progressSnapshotText,
+                      thinking: thinkingSnapshotText,
+                      lane: 'text',
+                    }),
+                  });
+                } catch (err) {
+                  console.error('[STREAM] onPartialReply error:', err);
+                }
               },
             };
 
