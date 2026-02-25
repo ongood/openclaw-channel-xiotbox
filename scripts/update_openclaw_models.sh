@@ -289,6 +289,9 @@ if [ -s "${ALLOWLIST_FINAL_FILE}" ] && [ "$(cat "${ALLOWLIST_FINAL_FILE}")" != "
   "${OPENCLAW_CMD}" config set agents.defaults.models "$(cat "${ALLOWLIST_FINAL_FILE}")" --json
 fi
 
+# Remove legacy/unknown key if present. Newer OpenClaw versions no longer accept it.
+"${OPENCLAW_CMD}" config unset commands.ownerDisplay >/dev/null 2>&1 || true
+
 echo "Updated:"
 echo "- models"
 if [ "$(cat "${DEFAULTS_PAYLOAD_FILE}")" != "{}" ]; then
@@ -301,6 +304,7 @@ if [ -s "${ALLOWLIST_FINAL_FILE}" ] && [ "$(cat "${ALLOWLIST_FINAL_FILE}")" != "
 else
   echo "- agents.defaults.models (skipped)"
 fi
+echo "- commands.ownerDisplay (removed if existed)"
 
 if [ "${NO_VERIFY}" != "1" ] && [ "${NO_VERIFY}" != "true" ]; then
   echo ""

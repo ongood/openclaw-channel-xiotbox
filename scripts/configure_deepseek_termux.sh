@@ -212,6 +212,14 @@ if enable_provider_cfg:
         models_cfg["mode"] = "merge"
     cfg["models"] = models_cfg
 
+commands_cfg = cfg.get("commands")
+if isinstance(commands_cfg, dict):
+    commands_cfg.pop("ownerDisplay", None)
+    if commands_cfg:
+        cfg["commands"] = commands_cfg
+    else:
+        cfg.pop("commands", None)
+
 cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 try:
     os.chmod(cfg_path, 0o600)

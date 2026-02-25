@@ -272,6 +272,14 @@ plugins["installs"] = installs
 data["plugins"] = plugins
 data["channels"] = channels
 
+commands_cfg = data.get("commands")
+if isinstance(commands_cfg, dict):
+    commands_cfg.pop("ownerDisplay", None)
+    if commands_cfg:
+        data["commands"] = commands_cfg
+    else:
+        data.pop("commands", None)
+
 cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 print("prepared config", cfg_path)
 PY
@@ -422,6 +430,14 @@ plugins["entries"] = entries
 plugins["installs"] = installs
 data["plugins"] = plugins
 
+commands_cfg = data.get("commands")
+if isinstance(commands_cfg, dict):
+    commands_cfg.pop("ownerDisplay", None)
+    if commands_cfg:
+        data["commands"] = commands_cfg
+    else:
+        data.pop("commands", None)
+
 cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 print("normalized plugins entries/installs", cfg_path)
 PY
@@ -441,6 +457,9 @@ if [ "$should_skip_doctor" -eq 1 ]; then
 else
   openclaw doctor --fix || true
 fi
+
+# Remove legacy key if present (mixed-version environments can reintroduce it).
+openclaw config unset commands.ownerDisplay >/dev/null 2>&1 || true
 
 if [ "$install_rc" -ne 0 ]; then
   warn "openclaw plugins install exited with code $install_rc; config normalized."
@@ -566,6 +585,15 @@ channels[new_id] = xiot
 channels.pop(old_id, None)
 data["channels"] = channels
 data["gateway"] = gateway
+
+commands_cfg = data.get("commands")
+if isinstance(commands_cfg, dict):
+    commands_cfg.pop("ownerDisplay", None)
+    if commands_cfg:
+        data["commands"] = commands_cfg
+    else:
+        data.pop("commands", None)
+
 cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 missing_keys = [k for k in ("GATEWAY_WSS_URL", "DEVICE_ID", "DEVICE_TOKEN") if not (str(xiot.get(k) or "").strip())]
