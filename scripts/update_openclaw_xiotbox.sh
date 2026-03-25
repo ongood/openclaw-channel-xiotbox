@@ -9,7 +9,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-INPUT="${1:-2.0.5}"
+INPUT="${1:-2.0.6}"
 if [[ "$INPUT" == http://* || "$INPUT" == https://* || "$INPUT" == git@* || "$INPUT" == ssh://* || "$INPUT" == file://* ]]; then
   TAG=""
   REPO="$INPUT"
@@ -178,6 +178,8 @@ if [ -f "$CFG_PATH" ]; then
   export PLUGINS_BACKUP_PATH
   export NEW_PLUGIN_ID
   export OLD_PLUGIN_ID
+  export EXT_DIR
+  export OLD_EXT_DIR
   export OPENCLAW_WIPE_CHANNELS
   python3 - <<'PY'
 import json
@@ -195,6 +197,12 @@ wipe_channels = os.environ.get("OPENCLAW_WIPE_CHANNELS", "0") == "1"
 plugins = data.get("plugins") or {}
 entries = plugins.get("entries") or {}
 installs = plugins.get("installs") or {}
+load_cfg = plugins.get("load") or {}
+if not isinstance(load_cfg, dict):
+    load_cfg = {}
+load_paths = load_cfg.get("paths") or []
+if not isinstance(load_paths, list):
+    load_paths = []
 channels = data.get("channels") or {}
 
 new_entry = entries.get(new_id)
@@ -264,6 +272,48 @@ entries.pop(new_id, None)
 entries.pop(old_id, None)
 installs.pop(new_id, None)
 installs.pop(old_id, None)
+
+tracked_paths = set()
+for env_key in ("EXT_DIR", "OLD_EXT_DIR"):
+    raw_path = (os.environ.get(env_key) or "").strip()
+    if raw_path:
+        tracked_paths.add(str(pathlib.Path(raw_path).expanduser().resolve()))
+
+if isinstance(merged_install, dict):
+    for key in ("installPath", "sourcePath"):
+        raw_path = str(merged_install.get(key) or "").strip()
+        if not raw_path:
+            continue
+        try:
+            tracked_paths.add(str(pathlib.Path(raw_path).expanduser().resolve()))
+        except OSError:
+            tracked_paths.add(str(pathlib.Path(raw_path).expanduser()))
+
+normalized_paths = []
+for raw_path in load_paths:
+    if not isinstance(raw_path, str):
+        continue
+    trimmed = raw_path.strip()
+    if not trimmed:
+        continue
+    try:
+        resolved = str(pathlib.Path(trimmed).expanduser().resolve())
+    except OSError:
+        resolved = str(pathlib.Path(trimmed).expanduser())
+    if resolved in tracked_paths:
+        continue
+    normalized_paths.append(trimmed)
+
+if normalized_paths:
+    load_cfg["paths"] = normalized_paths
+    plugins["load"] = load_cfg
+elif isinstance(load_cfg, dict):
+    load_cfg.pop("paths", None)
+    if load_cfg:
+        plugins["load"] = load_cfg
+    else:
+        plugins.pop("load", None)
+
 channels.pop(new_id, None)
 channels.pop(old_id, None)
 
@@ -470,6 +520,7 @@ if [ -f "$CFG_PATH" ]; then
   export BACKUP_PATH
   export NEW_PLUGIN_ID
   export OLD_PLUGIN_ID
+  export PLUGIN_PRESENT
   export OPENCLAW_WIPE_CHANNELS
   export XIOTBOX_GATEWAY_WSS="${XIOTBOX_GATEWAY_WSS:-}"
   export XIOTBOX_DEVICE_ID="${XIOTBOX_DEVICE_ID:-}"
@@ -499,6 +550,7 @@ data = json.loads(raw) if raw else {}
 new_id = os.environ["NEW_PLUGIN_ID"]
 old_id = os.environ["OLD_PLUGIN_ID"]
 wipe_channels = os.environ.get("OPENCLAW_WIPE_CHANNELS", "0") == "1"
+plugin_present = os.environ.get("PLUGIN_PRESENT") == "1"
 
 channels = data.get("channels") or {}
 existing_new = channels.get(new_id)
@@ -581,7 +633,10 @@ if os.environ.get("XIOTBOX_ALLOW_NEW_CLIENT_IDENTITIES"):
 if os.environ.get("XIOTBOX_USE_QUERY_AUTH"):
     xiot["USE_QUERY_AUTH"] = pick("USE_QUERY_AUTH", "XIOTBOX_USE_QUERY_AUTH")
 
-channels[new_id] = xiot
+if plugin_present:
+    channels[new_id] = xiot
+else:
+    channels.pop(new_id, None)
 channels.pop(old_id, None)
 data["channels"] = channels
 data["gateway"] = gateway
@@ -596,8 +651,9 @@ if isinstance(commands_cfg, dict):
 
 cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
-missing_keys = [k for k in ("GATEWAY_WSS_URL", "DEVICE_ID", "DEVICE_TOKEN") if not (str(xiot.get(k) or "").strip())]
-print(",".join(missing_keys))
+if plugin_present:
+    missing_keys = [k for k in ("GATEWAY_WSS_URL", "DEVICE_ID", "DEVICE_TOKEN") if not (str(xiot.get(k) or "").strip())]
+    print(",".join(missing_keys))
 PY
   )
 
