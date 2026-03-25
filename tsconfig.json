@@ -13,5 +13,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["index.ts", "src/**/*.ts", "wss_client.js"]
+  "include": ["index.ts", "setup-entry.ts", "src/**/*.ts", "wss_client.js"]
 }
