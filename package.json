@@ -1,6 +1,6 @@
 {
   "name": "xiotbox",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "description": "OpenClaw plugin for XiotBox connectivity via WebSocket",
   "type": "module",
   "main": "dist/index.js",
@@ -29,6 +29,9 @@
     "typescript": "^5.8.0"
   },
   "files": [
+    "src",
+    "index.ts",
+    "setup-entry.ts",
     "dist",
     "openclaw.plugin.json",
     "README.md",
@@ -40,9 +43,9 @@
   ],
   "openclaw": {
     "extensions": [
-      "./dist/index.js"
+      "./index.ts"
     ],
-    "setupEntry": "./dist/setup-entry.js",
+    "setupEntry": "./setup-entry.ts",
     "channels": [
       "xiotbox"
     ],
