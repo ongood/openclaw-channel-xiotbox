@@ -9,7 +9,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-INPUT="${1:-2.0.9}"
+INPUT="${1:-2.0.10}"
 if [[ "$INPUT" == http://* || "$INPUT" == https://* || "$INPUT" == git@* || "$INPUT" == ssh://* || "$INPUT" == file://* ]]; then
   TAG=""
   REPO="$INPUT"
@@ -593,6 +593,7 @@ if isinstance(existing_new, dict):
 if not wipe_channels:
     backup_path = pathlib.Path(os.environ["BACKUP_PATH"]).expanduser()
     if backup_path.exists():
+        backup_loaded = False
         try:
             backup = json.loads(backup_path.read_text("utf-8"))
             if isinstance(backup, dict):
@@ -600,7 +601,10 @@ if not wipe_channels:
                 merged.update(backup)
                 merged.update(xiot)
                 xiot = merged
-        finally:
+                backup_loaded = True
+        except Exception:
+            backup_loaded = False
+        if plugin_present and backup_loaded:
             try:
                 backup_path.unlink()
             except OSError:
