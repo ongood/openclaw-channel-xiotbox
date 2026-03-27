@@ -1309,19 +1309,7 @@ export const xiotboxPlugin = {
             const { cfg, log } = ctx;
             const accountId = DEFAULT_ACCOUNT_ID;
             const finalCfg = buildConfig(getChannelConfig(cfg));
-            // XiotBox remote chat currently prioritizes terminal stability over
-            // intermediate streaming. The runtime can emit several independent
-            // running snapshot lanes (progress/block/reasoning/partial), and those
-            // snapshots are full-text style payloads rather than strict deltas.
-            // That combination makes repeated "from the beginning" replies and
-            // stuck-running states much more likely on the Flutter client.
-            //
-            // Until the multi-lane running protocol is redesigned end-to-end,
-            // suppress remote streaming here and only deliver terminal success/fail.
-            finalCfg.STREAMING = false;
-            finalCfg.BLOCK_STREAMING = false;
-            finalCfg.PROGRESS_UPDATES = false;
-            log?.info?.(`[XiotBox][${accountId}] remote streaming disabled ` +
+            log?.info?.(`[XiotBox][${accountId}] remote streaming config ` +
                 `(STREAMING=${finalCfg.STREAMING}, ` +
                 `BLOCK_STREAMING=${finalCfg.BLOCK_STREAMING}, ` +
                 `PROGRESS_UPDATES=${finalCfg.PROGRESS_UPDATES})`);
@@ -1703,15 +1691,40 @@ export const xiotboxPlugin = {
                             lastProgressFingerprint = fingerprint;
                         progressSnapshotText = textPayload;
                         chunkSeq += 1;
-                        const stableText = runningSnapshotText || lastTextStreamText || textPayload;
                         client.sendMessage('COMMAND_RESULT', {
                             command_id: cmdId,
                             status: 'running',
                             trace_id: traceId,
-                            result: buildEncryptedResult(stableText, chunkSeq, null, {
+                            result: buildEncryptedResult(textPayload, chunkSeq, null, {
                                 progress: progressSnapshotText,
                                 thinking: thinkingSnapshotText,
                                 lane: 'progress',
+                            }),
+                        });
+                    };
+                    const emitTextSnapshot = (snapshotText) => {
+                        if (!finalCfg.STREAMING)
+                            return;
+                        const normalized = String(snapshotText || '');
+                        if (!normalized.trim())
+                            return;
+                        const now = Date.now();
+                        if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS)
+                            return;
+                        if (normalized === lastTextStreamText)
+                            return;
+                        lastTextStreamAt = now;
+                        lastTextStreamText = normalized;
+                        runningSnapshotText = normalized;
+                        chunkSeq += 1;
+                        client.sendMessage('COMMAND_RESULT', {
+                            command_id: cmdId,
+                            status: 'running',
+                            trace_id: traceId,
+                            result: buildEncryptedResult(normalized, chunkSeq, null, {
+                                progress: progressSnapshotText,
+                                thinking: thinkingSnapshotText,
+                                lane: 'text',
                             }),
                         });
                     };
@@ -1812,26 +1825,13 @@ export const xiotboxPlugin = {
                         // Only stream block replies to avoid leaking tool payloads to the chat UI.
                         if (kind !== 'block')
                             return;
+                        // When runtime reply hooks are available, onBlockReply is the single
+                        // source of body streaming. Avoid double-sending the same block
+                        // snapshots via both deliver() and onBlockReply().
+                        if (streamBlocksViaReplyOptions)
+                            return;
                         const blockSnapshotText = mergeRunningSnapshot(runningSnapshotText, blockParts.join('\n'));
-                        runningSnapshotText = blockSnapshotText;
-                        const now = Date.now();
-                        if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS)
-                            return;
-                        if (blockSnapshotText === lastTextStreamText)
-                            return;
-                        lastTextStreamAt = now;
-                        lastTextStreamText = blockSnapshotText;
-                        chunkSeq += 1;
-                        client.sendMessage('COMMAND_RESULT', {
-                            command_id: cmdId,
-                            status: 'running',
-                            trace_id: traceId,
-                            result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
-                                progress: progressSnapshotText,
-                                thinking: thinkingSnapshotText,
-                                lane: 'text',
-                            }),
-                        });
+                        emitTextSnapshot(blockSnapshotText);
                     };
                     const effectiveConfig = forceTextOnly ? buildTextOnlyConfig(fullConfig) : fullConfig;
                     emitRunningUpdate('已接收指令，正在执行…', 'phase:accepted', { force: true });
@@ -1861,7 +1861,6 @@ export const xiotboxPlugin = {
                                 : undefined,
                             onBlockReply: (payload) => {
                                 try {
-                                    console.log('[STREAM] onBlockReply fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
                                     if (!finalCfg.STREAMING)
                                         return;
                                     const blockText = typeof payload === 'string'
@@ -1880,25 +1879,7 @@ export const xiotboxPlugin = {
                                         blockParts.push(blockText);
                                     }
                                     const blockSnapshotText = mergeRunningSnapshot(runningSnapshotText, blockParts.join('\n'));
-                                    runningSnapshotText = blockSnapshotText;
-                                    const now = Date.now();
-                                    if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS)
-                                        return;
-                                    if (blockSnapshotText === lastTextStreamText)
-                                        return;
-                                    lastTextStreamAt = now;
-                                    lastTextStreamText = blockSnapshotText;
-                                    chunkSeq += 1;
-                                    client.sendMessage('COMMAND_RESULT', {
-                                        command_id: cmdId,
-                                        status: 'running',
-                                        trace_id: traceId,
-                                        result: buildEncryptedResult(blockSnapshotText, chunkSeq, null, {
-                                            progress: progressSnapshotText,
-                                            thinking: thinkingSnapshotText,
-                                            lane: 'text',
-                                        }),
-                                    });
+                                    emitTextSnapshot(blockSnapshotText);
                                 }
                                 catch (err) {
                                     console.error('[STREAM] onBlockReply error:', err);
@@ -1906,35 +1887,12 @@ export const xiotboxPlugin = {
                             },
                             onReasoningStream: (payload) => {
                                 try {
-                                    console.log('[STREAM] onReasoningStream fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
-                                    if (!finalCfg.STREAMING)
-                                        return;
                                     const reasoningText = typeof payload === 'string'
                                         ? payload
                                         : payload?.text || payload?.thinking || normalizeReasoningPayload(payload);
                                     if (!reasoningText)
                                         return;
                                     thinkingSnapshotText = mergeRunningSnapshot(thinkingSnapshotText, reasoningText);
-                                    const reasoningSnapshotText = mergeRunningSnapshot(runningSnapshotText, reasoningText);
-                                    runningSnapshotText = reasoningSnapshotText;
-                                    const now = Date.now();
-                                    if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS)
-                                        return;
-                                    if (reasoningSnapshotText === lastTextStreamText)
-                                        return;
-                                    lastTextStreamAt = now;
-                                    lastTextStreamText = reasoningSnapshotText;
-                                    chunkSeq += 1;
-                                    client.sendMessage('COMMAND_RESULT', {
-                                        command_id: cmdId,
-                                        status: 'running',
-                                        trace_id: traceId,
-                                        result: buildEncryptedResult(reasoningSnapshotText, chunkSeq, null, {
-                                            progress: progressSnapshotText,
-                                            thinking: thinkingSnapshotText,
-                                            lane: 'text',
-                                        }),
-                                    });
                                 }
                                 catch (err) {
                                     console.error('[STREAM] onReasoningStream error:', err);
@@ -1942,36 +1900,10 @@ export const xiotboxPlugin = {
                             },
                             onPartialReply: (payload) => {
                                 try {
-                                    console.log('[STREAM] onPartialReply fired, STREAMING=', finalCfg.STREAMING, 'payloadType=', typeof payload);
-                                    if (!finalCfg.STREAMING)
-                                        return;
                                     const reasoningText = normalizeReasoningPayload(payload);
                                     if (reasoningText) {
                                         thinkingSnapshotText = mergeRunningSnapshot(thinkingSnapshotText, reasoningText);
                                     }
-                                    const partialText = normalizeTextPayload(payload);
-                                    if (!partialText)
-                                        return;
-                                    const partialSnapshotText = mergeRunningSnapshot(runningSnapshotText, partialText);
-                                    runningSnapshotText = partialSnapshotText;
-                                    const now = Date.now();
-                                    if (now - lastTextStreamAt < finalCfg.STREAM_THROTTLE_MS)
-                                        return;
-                                    if (partialSnapshotText === lastTextStreamText)
-                                        return;
-                                    lastTextStreamAt = now;
-                                    lastTextStreamText = partialSnapshotText;
-                                    chunkSeq += 1;
-                                    client.sendMessage('COMMAND_RESULT', {
-                                        command_id: cmdId,
-                                        status: 'running',
-                                        trace_id: traceId,
-                                        result: buildEncryptedResult(partialSnapshotText, chunkSeq, null, {
-                                            progress: progressSnapshotText,
-                                            thinking: thinkingSnapshotText,
-                                            lane: 'text',
-                                        }),
-                                    });
                                 }
                                 catch (err) {
                                     console.error('[STREAM] onPartialReply error:', err);

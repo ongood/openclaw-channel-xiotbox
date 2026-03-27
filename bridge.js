@@ -37,11 +37,6 @@ const XIOTBOX_CONFIG = {
   ALLOW_NEW_CLIENT_IDENTITIES: xiotbox.ALLOW_NEW_CLIENT_IDENTITIES,
 };
 
-// Prefer terminal stability over intermediate running snapshots.
-// Some server deployments still launch the standalone bridge path rather than
-// the channel runtime entrypoint, so disable bridge streaming here as well.
-XIOTBOX_CONFIG.STREAMING = false;
-
 if (!GATEWAY_TOKEN) {
   console.error('[Bridge] FATAL: GATEWAY_TOKEN is required in .env');
   process.exit(1);
@@ -487,9 +482,7 @@ async function connectToXiotBox() {
 
 async function main() {
   console.log('--- XiotBox OpenClaw Bridge Starting (E2E) ---');
-  console.log(
-    `[Bridge] remote streaming disabled (STREAMING=${XIOTBOX_CONFIG.STREAMING})`,
-  );
+  console.log(`[Bridge] streaming config (STREAMING=${XIOTBOX_CONFIG.STREAMING})`);
   connectToGateway();
   await connectToXiotBox();
 }
