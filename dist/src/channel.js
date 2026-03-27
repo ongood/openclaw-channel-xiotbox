@@ -1309,6 +1309,18 @@ export const xiotboxPlugin = {
             const { cfg, log } = ctx;
             const accountId = DEFAULT_ACCOUNT_ID;
             const finalCfg = buildConfig(getChannelConfig(cfg));
+            // XiotBox remote chat currently prioritizes terminal stability over
+            // intermediate streaming. The runtime can emit several independent
+            // running snapshot lanes (progress/block/reasoning/partial), and those
+            // snapshots are full-text style payloads rather than strict deltas.
+            // That combination makes repeated "from the beginning" replies and
+            // stuck-running states much more likely on the Flutter client.
+            //
+            // Until the multi-lane running protocol is redesigned end-to-end,
+            // suppress remote streaming here and only deliver terminal success/fail.
+            finalCfg.STREAMING = false;
+            finalCfg.BLOCK_STREAMING = false;
+            finalCfg.PROGRESS_UPDATES = false;
             if (!finalCfg.DEVICE_ID || !finalCfg.DEVICE_TOKEN) {
                 const err = `Missing XiotBox configuration (DEVICE_ID or DEVICE_TOKEN) for account "${accountId}".`;
                 log?.error?.(`[XiotBox][${accountId}] ${err}`);

@@ -1,4 +1,3 @@
-import { defineChannelPluginEntry } from 'openclaw/plugin-sdk/core';
 import { xiotboxPlugin } from './src/channel.js';
 import { createXiotboxLocalControlTool } from './src/local-control-tool.js';
 import { setXiotboxRuntime } from './src/runtime.js';
@@ -13,13 +12,17 @@ function registerXiotboxTools(api) {
         logger: api?.logger,
     }), { optional: true });
 }
-export default defineChannelPluginEntry({
+export default {
     id: 'xiotbox',
     name: 'XiotBox Channel',
     description: 'XiotBox channel plugin for WSS device connectivity and OpenClaw runtime dispatch.',
     plugin: xiotboxPlugin,
-    setRuntime: setXiotboxRuntime,
-    registerFull(api) {
+    register(api) {
+        setXiotboxRuntime(api.runtime);
+        api.registerChannel({ plugin: xiotboxPlugin });
+        if (api.registrationMode !== 'full') {
+            return;
+        }
         registerXiotboxTools(api);
     },
-});
+};
