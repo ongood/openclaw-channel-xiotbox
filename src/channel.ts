@@ -1453,6 +1453,12 @@ export const xiotboxPlugin = {
       finalCfg.STREAMING = false;
       finalCfg.BLOCK_STREAMING = false;
       finalCfg.PROGRESS_UPDATES = false;
+      log?.info?.(
+        `[XiotBox][${accountId}] remote streaming disabled ` +
+          `(STREAMING=${finalCfg.STREAMING}, ` +
+          `BLOCK_STREAMING=${finalCfg.BLOCK_STREAMING}, ` +
+          `PROGRESS_UPDATES=${finalCfg.PROGRESS_UPDATES})`,
+      );
 
       if (!finalCfg.DEVICE_ID || !finalCfg.DEVICE_TOKEN) {
         const err = `Missing XiotBox configuration (DEVICE_ID or DEVICE_TOKEN) for account "${accountId}".`;
