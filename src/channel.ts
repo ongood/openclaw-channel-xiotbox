@@ -61,6 +61,8 @@ type ProgressSnapshot = {
   progressPercent?: number;
 };
 
+type StreamEvent = Record<string, any>;
+
 let sessionStoreCache: SessionStoreCache | null = null;
 const contextEpochCache = new Map<string, ContextEpochCacheEntry>();
 
@@ -1398,6 +1400,69 @@ function buildProgressFingerprint(params: {
   ].join('|');
 }
 
+function buildRunningStreamEvents(params: {
+  toolNames: string[];
+  snapshot: ProgressSnapshot | null;
+  fallbackText?: string;
+  thinkingText?: string;
+}): StreamEvent[] {
+  const events: StreamEvent[] = [];
+  const toolNames = Array.from(
+    new Set(
+      (params.toolNames || [])
+        .map((name) => compactProgressText(name, 48))
+        .filter(Boolean),
+    ),
+  );
+  const latestTool = toolNames.length ? toolNames[toolNames.length - 1] : '';
+  const snapshot = params.snapshot;
+  const progressText = buildProgressRunningText({
+    toolNames,
+    snapshot,
+    fallbackText: params.fallbackText,
+  });
+  const toolSummarySource =
+    snapshot?.stage ||
+    snapshot?.status ||
+    snapshot?.detail ||
+    compactProgressText(params.fallbackText, 64);
+  const toolSummary = compactProgressText(toolSummarySource, 48);
+  const thinkingText = String(params.thinkingText || '').trim();
+
+  events.push({
+    type: 'tool_call',
+    id: 'tool_running_primary',
+    status: 'running',
+    tool_name: latestTool || 'exec',
+    tool_label: latestTool || '处理中',
+    tool_icon: 'terminal',
+    params_summary: toolSummary || compactProgressText(progressText, 48),
+    detail: progressText,
+    collapsible: false,
+  });
+
+  if (snapshot?.progressPercent != null) {
+    events.push({
+      type: 'progress',
+      id: 'progress_running_primary',
+      status: 'running',
+      message: progressText,
+      percent: snapshot.progressPercent,
+    });
+  }
+
+  if (thinkingText) {
+    events.push({
+      type: 'thinking',
+      id: 'thinking_running_primary',
+      status: 'streaming',
+      content: thinkingText,
+    });
+  }
+
+  return events;
+}
+
 function summarizeToolSignals(outPayload: any): string {
   const uniq = extractToolSignalNames(outPayload);
   if (!uniq.length) return '';
@@ -1620,6 +1685,7 @@ export const xiotboxPlugin = {
               thinking?: string;
               progress?: string;
               lane?: string;
+              events?: StreamEvent[];
             },
           ) => {
             const e2eMulti: Record<string, any> = {};
@@ -1667,6 +1733,9 @@ export const xiotboxPlugin = {
               }
               if (typeof streamMeta.progress === 'string' && streamMeta.progress.trim()) {
                 metadata.stream_progress = streamMeta.progress;
+              }
+              if (Array.isArray(streamMeta.events) && streamMeta.events.length) {
+                metadata.stream_events = streamMeta.events;
               }
               if (Object.keys(metadata).length) {
                 result.metadata = metadata;
@@ -1845,7 +1914,12 @@ export const xiotboxPlugin = {
           const emitRunningUpdate = (
             runningText: string,
             fingerprint: string,
-            opts?: { force?: boolean },
+            opts?: {
+              force?: boolean;
+              toolNames?: string[];
+              snapshot?: ProgressSnapshot | null;
+              fallbackText?: string;
+            },
           ) => {
             if (!finalCfg.PROGRESS_UPDATES) return;
             const textPayload = compactProgressText(runningText, 180);
@@ -1863,6 +1937,12 @@ export const xiotboxPlugin = {
             lastProgressAt = now;
             if (fingerprint) lastProgressFingerprint = fingerprint;
             progressSnapshotText = textPayload;
+            const streamEvents = buildRunningStreamEvents({
+              toolNames: opts?.toolNames || toolNamesSeen,
+              snapshot: opts?.snapshot || null,
+              fallbackText: opts?.fallbackText || runningText,
+              thinkingText: thinkingSnapshotText,
+            });
 
             chunkSeq += 1;
             client.sendMessage('COMMAND_RESULT', {
@@ -1873,6 +1953,7 @@ export const xiotboxPlugin = {
                 progress: progressSnapshotText,
                 thinking: thinkingSnapshotText,
                 lane: 'progress',
+                events: streamEvents,
               }),
             });
           };
@@ -1969,6 +2050,11 @@ export const xiotboxPlugin = {
                   snapshot: progressSnapshot,
                   fallbackText: replyText,
                 }),
+                {
+                  toolNames: toolNamesSeen.slice(),
+                  snapshot: progressSnapshot,
+                  fallbackText: replyText,
+                },
               );
             }
 
