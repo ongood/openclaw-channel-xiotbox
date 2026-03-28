@@ -70,6 +70,12 @@ primary = os.environ.get("OPENCLAW_PRIMARY_MODEL", "").strip()
 fallbacks_json_raw = os.environ.get("OPENCLAW_FALLBACK_MODELS_JSON", "").strip()
 fallbacks_csv_raw = os.environ.get("OPENCLAW_FALLBACK_MODELS", "").strip()
 providers_raw = os.environ.get("OPENCLAW_PROVIDERS_JSON", "").strip()
+disable_dev_role_model_ids_json_raw = os.environ.get(
+    "OPENCLAW_DISABLE_DEVELOPER_ROLE_MODEL_IDS_JSON", ""
+).strip()
+disable_dev_role_model_ids_csv_raw = os.environ.get(
+    "OPENCLAW_DISABLE_DEVELOPER_ROLE_MODEL_IDS", ""
+).strip()
 sync_allowlist_raw = os.environ.get("OPENCLAW_SYNC_ALLOWLIST", "false").strip().lower()
 allowlist_extra_json_raw = os.environ.get("OPENCLAW_ALLOWLIST_EXTRA_MODELS_JSON", "").strip()
 allowlist_extra_csv_raw = os.environ.get("OPENCLAW_ALLOWLIST_EXTRA_MODELS", "").strip()
@@ -89,6 +95,37 @@ except json.JSONDecodeError as exc:
 if not isinstance(providers, dict) or not providers:
     raise SystemExit("ERROR: OPENCLAW_PROVIDERS_JSON must be a non-empty JSON object.")
 
+default_disable_dev_role_model_ids = [
+    "qwen3.5-plus",
+    "qwen3-max-2026-01-23",
+    "qwen3-coder-next",
+    "qwen3-coder-plus",
+    "minimax-m2.5",
+    "glm-5",
+    "kimi-k2.5",
+]
+if disable_dev_role_model_ids_json_raw:
+    try:
+        disable_dev_role_model_ids = json.loads(disable_dev_role_model_ids_json_raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"ERROR: OPENCLAW_DISABLE_DEVELOPER_ROLE_MODEL_IDS_JSON is invalid JSON: {exc}"
+        ) from exc
+elif disable_dev_role_model_ids_csv_raw:
+    disable_dev_role_model_ids = [
+        part.strip() for part in disable_dev_role_model_ids_csv_raw.split(",") if part.strip()
+    ]
+else:
+    disable_dev_role_model_ids = default_disable_dev_role_model_ids
+
+if not isinstance(disable_dev_role_model_ids, list) or any(
+    not isinstance(x, str) or not x.strip() for x in disable_dev_role_model_ids
+):
+    raise SystemExit(
+        "ERROR: OPENCLAW_DISABLE_DEVELOPER_ROLE_MODEL_IDS(_JSON) must be a list of non-empty model ids."
+    )
+disable_dev_role_model_id_set = {item.strip().lower() for item in disable_dev_role_model_ids}
+
 for provider_id, provider in providers.items():
     if not isinstance(provider_id, str) or not provider_id.strip():
         raise SystemExit("ERROR: provider id must be non-empty string.")
@@ -105,6 +142,12 @@ for provider_id, provider in providers.items():
         model_id = model.get("id")
         if not isinstance(model_id, str) or not model_id.strip():
             raise SystemExit(f"ERROR: provider '{provider_id}' model[{idx}] missing id.")
+        if model_id.strip().lower() in disable_dev_role_model_id_set:
+            compat = model.get("compat")
+            if not isinstance(compat, dict):
+                compat = {}
+            compat["supportsDeveloperRole"] = False
+            model["compat"] = compat
 
 models_payload = {
     "mode": mode,
