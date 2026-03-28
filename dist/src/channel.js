@@ -823,25 +823,52 @@ const HARD_EXIT_PATTERNS = [
     /^\/quit\b/i,
     /^\/chat\b/i,
     /^\/text\b/i,
-    /退出控制/,
-    /结束控制/,
-    /停止操控/,
-    /结束操控/,
-    /停止控制/,
-    /退出操控/,
-    /退出操作/,
-    /结束操作/,
-    /切回聊天/,
-    /恢复聊天/,
-    /只聊天/,
-    /仅聊天/,
     /stop\s*control/i,
     /exit\s*control/i,
     /back\s*to\s*chat/i,
+    /text\s*only/i,
+    /text\s*mode/i,
 ];
+const HARD_EXIT_COMMAND_ALIASES = [
+    'exit control',
+    'stop control',
+    'quit control',
+    'back to chat',
+    'switch to chat',
+    'resume chat',
+    'chat only',
+    'text only',
+    'text mode',
+    'leave control mode',
+    '退出控制',
+    '结束控制',
+    '停止操控',
+    '结束操控',
+    '停止控制',
+    '退出操控',
+    '退出操作',
+    '结束操作',
+    '切回聊天',
+    '恢复聊天',
+    '只聊天',
+    '仅聊天',
+];
+function normalizeAliasText(text) {
+    return String(text || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[。.!！?？,，;；:：()[\]{}"'“”‘’]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
 function isHardExitCommand(text) {
-    const trimmed = (text || '').trim();
-    return HARD_EXIT_PATTERNS.some((re) => re.test(trimmed));
+    const trimmed = String(text || '').trim();
+    if (!trimmed)
+        return false;
+    if (HARD_EXIT_PATTERNS.some((re) => re.test(trimmed)))
+        return true;
+    const normalized = normalizeAliasText(trimmed);
+    return HARD_EXIT_COMMAND_ALIASES.some((alias) => normalized.includes(normalizeAliasText(alias)));
 }
 // ── Consecutive tool-only counter (keyed by thread+sender) ──
 const MAX_CONSECUTIVE_TOOL_ONLY = 3;
@@ -859,11 +886,12 @@ function isLikelyNonSubstantiveAck(text) {
     const normalized = (text || '').trim();
     if (!normalized)
         return true;
-    const compact = normalized
-        .toLowerCase()
-        .replace(/\s+/g, '')
-        .replace(/[。.!！?？,，;；:]/g, '');
+    const compact = normalizeAliasText(normalized).replace(/\s+/g, '');
     const exactAcks = new Set([
+        'operationcompleted',
+        'operationcomplete',
+        'completed',
+        'complete',
         '操作已完成',
         '操作完成',
         '已完成',
@@ -872,13 +900,20 @@ function isLikelyNonSubstantiveAck(text) {
         'ok',
         'okay',
         'success',
+        'successful',
         'completed',
+        'taskcompleted',
+        'processingcompleted',
         '任务已完成',
         '处理完成',
     ]);
     if (exactAcks.has(compact))
         return true;
-    if (compact.length <= 12 && (compact.includes('操作已完成') || compact.includes('任务已完成'))) {
+    if (compact.length <= 20 &&
+        (compact.includes('operationcompleted') ||
+            compact.includes('taskcompleted') ||
+            compact.includes('操作已完成') ||
+            compact.includes('任务已完成'))) {
         return true;
     }
     return false;
@@ -1027,24 +1062,23 @@ const IN_PROGRESS_HINTS = [
     'running',
     'in_progress',
     'inprogress',
+    'in progress',
     'pending',
     'processing',
     'working',
     'executing',
     'queued',
+    'please wait',
     '进行中',
     '处理中',
     '执行中',
     '等待中',
 ];
 function isLikelyInProgressText(text) {
-    const compact = String(text || '')
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, '_');
-    if (!compact)
+    const normalized = normalizeAliasText(text);
+    if (!normalized)
         return false;
-    return IN_PROGRESS_HINTS.some((hint) => compact.includes(hint));
+    return IN_PROGRESS_HINTS.some((hint) => normalized.includes(normalizeAliasText(hint)));
 }
 function hasInProgressSignal(outPayload) {
     if (!outPayload || typeof outPayload !== 'object')
@@ -1249,8 +1283,8 @@ function buildProgressRunningText(params) {
         segments.push(fallbackText);
     }
     if (!segments.length)
-        return '正在执行，请稍候…';
-    return `正在执行：${segments.join(' · ')}`;
+        return 'Running, please wait…';
+    return `Running: ${segments.join(' · ')}`;
 }
 function buildProgressFingerprint(params) {
     const uniqTools = Array.from(new Set((params.toolNames || [])
@@ -1290,7 +1324,7 @@ function buildRunningStreamEvents(params) {
         id: 'tool_running_primary',
         status: 'running',
         tool_name: latestTool || 'exec',
-        tool_label: latestTool || '处理中',
+        tool_label: latestTool || 'running',
         tool_icon: 'terminal',
         params_summary: toolSummary || compactProgressText(progressText, 48),
         detail: progressText,
@@ -1605,7 +1639,7 @@ export const xiotboxPlugin = {
                             message_id: cmdId,
                             sender_id: senderId,
                         }));
-                        text = `用户请求退出操控模式，请停止调用任何工具，仅用文字回复。用户消息：${text}`;
+                        text = `The user requested to exit control mode. Do not call any tools. Reply with text only. User message: ${text}`;
                     }
                     // ── Hard-exit: user explicitly wants to leave tool/control mode ──
                     const hardExitRequested = !shouldForceExit && isHardExitCommand(text);
@@ -1626,7 +1660,7 @@ export const xiotboxPlugin = {
                             command_id: cmdId,
                             status: 'success',
                             trace_id: traceId,
-                            result: buildEncryptedResult('已退出控制模式，已切回聊天模式。接下来仅进行文字对话；如需再次操控，请重新描述要执行的操作。', hardExitChunkSeq, resolveSessionUsageSnapshot(fullConfig, sessionKey)),
+                            result: buildEncryptedResult('Exited control mode and switched back to chat mode. Continue with text-only conversation. If control is needed again, ask with a new operation request.', hardExitChunkSeq, resolveSessionUsageSnapshot(fullConfig, sessionKey)),
                         };
                         client.sendMessage('COMMAND_RESULT', successPayload);
                         setCached(cmdId, successPayload);
@@ -1875,8 +1909,8 @@ export const xiotboxPlugin = {
                         }
                         lastText = replyText;
                         if (kind === 'block') {
-                            // 始终将 block 内容加入 blockParts，确保最终文本完整。
-                            // onBlockReply 可能不会被触发（非流式响应），导致 blockParts 为空。
+                            // Always append block content to blockParts so the final text stays complete.
+                            // onBlockReply may not fire for non-streaming responses, which would otherwise leave blockParts empty.
                             blockParts.push(replyText);
                         }
                         else if (kind === 'final') {
@@ -1896,7 +1930,7 @@ export const xiotboxPlugin = {
                         emitTextSnapshot(blockSnapshotText);
                     };
                     const effectiveConfig = forceTextOnly ? buildTextOnlyConfig(fullConfig) : fullConfig;
-                    emitRunningUpdate('已接收指令，正在执行…', 'phase:accepted', { force: true });
+                    emitRunningUpdate('Instruction received, running…', 'phase:accepted', { force: true });
                     // Prefer deterministic dispatch path that waits for all queued deliveries before finalizing.
                     const replyApi = runtime?.channel?.reply;
                     const createDispatcher = replyApi?.createReplyDispatcherWithTyping;
@@ -1936,7 +1970,7 @@ export const xiotboxPlugin = {
                                         text_len: blockText.length,
                                         text_preview: blockText.slice(0, 60),
                                     }));
-                                    // deliver 已 push 相同 block 时跳过，避免重复
+                                    // Skip when deliver() already pushed the same block to avoid duplicates.
                                     if (!blockParts.includes(blockText)) {
                                         blockParts.push(blockText);
                                     }
@@ -2005,7 +2039,7 @@ export const xiotboxPlugin = {
                     const isToolOnlyReply = !resolvedFinalText && toolOnlyLikely;
                     const isNoReply = resolvedFinalText ? shouldSkipReply(resolvedFinalText) : false;
                     // When a control tool (xiotbox_control etc.) ran, the agent's short ack
-                    // ("操作已完成", "done" …) IS the meaningful reply – don't replace it.
+                    // ("operation completed", "done", etc.) IS the meaningful reply - do not replace it.
                     const isAckOnlyReply = resolvedFinalText && !sawControlToolSignal
                         ? isLikelyNonSubstantiveAck(resolvedFinalText)
                         : false;
@@ -2042,14 +2076,14 @@ export const xiotboxPlugin = {
                         const uniq = Array.from(new Set(toolNamesSeen.map(s => s.trim()).filter(Boolean)));
                         if (opts?.inProgress) {
                             if (uniq.length) {
-                                return `（正在执行: ${uniq.join(', ')}）`;
+                                return `(Running: ${uniq.join(', ')})`;
                             }
-                            return '（正在执行操作，请稍候）';
+                            return '(Running operation, please wait)';
                         }
                         if (uniq.length) {
-                            return `（已执行: ${uniq.join(', ')}）`;
+                            return `(Executed: ${uniq.join(', ')})`;
                         }
-                        return '（操作已完成）';
+                        return '(Operation completed)';
                     };
                     if (!resolvedFinalText) {
                         // If OpenClaw queued something but we got no text, treat as failure (bug/merge issue).
@@ -2109,7 +2143,7 @@ export const xiotboxPlugin = {
                             scheduleForceExit(forceExitKeyValue);
                             resolvedFinalText =
                                 buildToolSummary() +
-                                    '\n\n⚠️ 连续多次仅执行操作未产生文字回复，已自动恢复正常对话模式。如需继续操控，请重新描述您的需求。';
+                                    '\n\nWARNING: Multiple consecutive tool-only turns produced no textual reply. The plugin has automatically restored normal chat mode. If you want to continue controlling the device, send a new control request.';
                             structuredLog('warn', 'consecutive_tool_only_auto_reset', {
                                 consecutive_count: consecutiveCount,
                             });

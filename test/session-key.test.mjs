@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Unit tests for session key generation, context epoch, and normalization helpers.
  * Run with: node --test test/session-key.test.mjs
  */
@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-// ── Inline pure functions from channel.ts (no runtime deps) ──
+// Inline pure functions from channel.ts (no runtime dependencies).
 
 const DEFAULT_THREAD_ID = 'default';
 
@@ -61,7 +61,7 @@ function resolveInboundContextEpoch(incoming, deviceId, threadId) {
   return { epoch: 0, source: 'default' };
 }
 
-// ── Tests ──
+// Tests
 
 test('normalizeAccountId returns default for falsy values', () => {
   assert.equal(normalizeAccountId(null), 'default');

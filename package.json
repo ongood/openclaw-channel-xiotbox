@@ -1,16 +1,31 @@
 {
   "name": "xiotbox",
   "version": "2.0.15",
-  "description": "OpenClaw plugin for XiotBox connectivity via WebSocket",
+  "description": "OpenClaw XiotBox channel plugin with remote chat delivery, optional device-control tools, and bridge-mode support.",
   "type": "module",
   "main": "dist/index.js",
+  "homepage": "https://github.com/ongood/openclaw-channel-xiotbox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ongood/openclaw-channel-xiotbox.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ongood/openclaw-channel-xiotbox/issues"
+  },
   "keywords": [
+    "openclaw",
     "openclaw-plugin",
     "xiotbox",
-    "channel"
+    "channel",
+    "bridge",
+    "device-control",
+    "websocket"
   ],
-  "author": "OpenClaw",
+  "author": "OnGood",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node bridge.js",
     "build": "tsc -p tsconfig.json",

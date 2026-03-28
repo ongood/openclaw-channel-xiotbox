@@ -1,4 +1,4 @@
-import fs from 'fs';
+﻿import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -38,8 +38,8 @@ type BridgeConfigFile = {
    */
   endpoint: string;
   /**
-   * Safety allowlist for bridge → XiotBox / OpenClaw localhost usage.
-   * This is *not* a security boundary, just a guard rail for misconfig.
+   * Safety allowlist for bridge -> XiotBox / OpenClaw localhost usage.
+   * This is *not* a security boundary, only a guard rail against misconfiguration.
    */
   allowlist: string[];
   /**
@@ -176,9 +176,9 @@ function defaultSecrets(): SecretFileShape {
 }
 
 /**
- * Optional one-shot migration from legacy local config.json at package root
+ * Optional one-shot migration from the legacy package-root config.json
  * (used by older bridge/config tooling) into the unified OPENCLAW_HOME/xiotbox
- * layout. This does NOT read any environment variables and only touches
+ * layout. This does not read environment variables and only touches
  * existing JSON files.
  */
 function migrateLegacyConfigIfNeeded(configPath: string, secretPath: string): void {

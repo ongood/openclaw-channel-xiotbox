@@ -1,105 +1,219 @@
 {
-    "id": "xiotbox",
-    "version": "2.0.15",
-    "channels": [
-        "xiotbox"
-    ],
-    "configSchema": {
-        "type": "object",
-        "additionalProperties": true,
-        "properties": {
-            "enabled": {
-                "type": "boolean"
-            },
-            "name": {
-                "type": "string"
-            },
-            "GATEWAY_WSS_URL": {
-                "type": "string"
-            },
-            "DEVICE_ID": {
-                "type": "string"
-            },
-            "DEVICE_TOKEN": {
-                "type": "string"
-            },
-            "USE_QUERY_AUTH": {
-                "type": "boolean"
-            },
-            "OUTBOX_MAX": {
-                "type": "number"
-            },
-            "OUTBOX_TTL_MS": {
-                "type": "number"
-            },
-            "COMMAND_CACHE_TTL_MS": {
-                "type": "number"
-            },
-            "COMMAND_CACHE_MAX": {
-                "type": "number"
-            },
-            "STREAMING": {
-                "type": "boolean"
-            },
-            "STREAM_THROTTLE_MS": {
-                "type": "number"
-            },
-            "PROGRESS_UPDATES": {
-                "type": "boolean"
-            },
-            "PROGRESS_THROTTLE_MS": {
-                "type": "number"
-            },
-            "PROGRESS_MAX_UPDATES": {
-                "type": "number"
-            },
-            "API_BASE_URL": {
-                "type": "string"
-            },
-            "E2E_KEY_PATH": {
-                "type": "string"
-            },
-            "E2E_ROTATE": {
-                "type": [
-                    "string",
-                    "boolean",
-                    "number"
-                ]
-            },
-            "IDENTITY_KEY_PATH": {
-                "type": "string"
-            },
-            "TRUST_PATH": {
-                "type": "string"
-            },
-            "ALLOW_NEW_CLIENT_IDENTITIES": {
-                "type": [
-                    "string",
-                    "boolean",
-                    "number"
-                ]
-            },
-            "SCOPES": {
-                "type": [
-                    "string",
-                    "array"
-                ]
-            },
-            "CONTROL_ACTIONS": {
-                "type": [
-                    "string",
-                    "array"
-                ]
-            },
-            "LOCAL_CONTROL_BASE_URL": {
-                "type": "string"
-            },
-            "LOCAL_CONTROL_TOKEN": {
-                "type": "string"
-            },
-            "LOCAL_CONTROL_TIMEOUT_MS": {
-                "type": "number"
-            }
-        }
+  "id": "xiotbox",
+  "name": "XiotBox OpenClaw Channel",
+  "description": "XiotBox channel plugin for OpenClaw with remote chat delivery, optional device-control tools, and bridge-mode support.",
+  "version": "2.0.15",
+  "channels": [
+    "xiotbox"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "description": "Enable or disable the XiotBox channel plugin."
+      },
+      "name": {
+        "type": "string",
+        "description": "Optional display name override for this channel instance."
+      },
+      "GATEWAY_WSS_URL": {
+        "type": "string",
+        "description": "XiotBox Gateway WebSocket Secure endpoint used for remote channel connectivity."
+      },
+      "DEVICE_ID": {
+        "type": "string",
+        "description": "XiotBox device identity used by the remote channel session."
+      },
+      "DEVICE_TOKEN": {
+        "type": "string",
+        "description": "Secret device token paired with DEVICE_ID."
+      },
+      "USE_QUERY_AUTH": {
+        "type": "boolean",
+        "description": "Use query-string authentication when required by the target gateway."
+      },
+      "OUTBOX_MAX": {
+        "type": "number",
+        "description": "Maximum number of queued outbound messages kept before trimming."
+      },
+      "OUTBOX_TTL_MS": {
+        "type": "number",
+        "description": "Time-to-live for queued outbound messages in milliseconds."
+      },
+      "COMMAND_CACHE_TTL_MS": {
+        "type": "number",
+        "description": "Retention window for command de-duplication cache entries in milliseconds."
+      },
+      "COMMAND_CACHE_MAX": {
+        "type": "number",
+        "description": "Maximum number of cached command entries kept for de-duplication."
+      },
+      "STREAMING": {
+        "type": "boolean",
+        "description": "Enable reply streaming when the runtime and target route support it."
+      },
+      "STREAM_THROTTLE_MS": {
+        "type": "number",
+        "description": "Throttle interval for streaming updates in milliseconds."
+      },
+      "PROGRESS_UPDATES": {
+        "type": "boolean",
+        "description": "Emit lightweight progress events alongside the main reply path."
+      },
+      "PROGRESS_THROTTLE_MS": {
+        "type": "number",
+        "description": "Throttle interval for progress events in milliseconds."
+      },
+      "PROGRESS_MAX_UPDATES": {
+        "type": "number",
+        "description": "Upper bound for progress event count per request."
+      },
+      "API_BASE_URL": {
+        "type": "string",
+        "description": "HTTP API base URL used for XiotBox API operations."
+      },
+      "E2E_KEY_PATH": {
+        "type": "string",
+        "description": "Optional path to the end-to-end encryption key material."
+      },
+      "E2E_ROTATE": {
+        "type": [
+          "string",
+          "boolean",
+          "number"
+        ],
+        "description": "Optional E2E rotation policy or override value."
+      },
+      "IDENTITY_KEY_PATH": {
+        "type": "string",
+        "description": "Optional path to the local identity key material."
+      },
+      "TRUST_PATH": {
+        "type": "string",
+        "description": "Optional path to the trust store used for peer pinning or identity trust."
+      },
+      "ALLOW_NEW_CLIENT_IDENTITIES": {
+        "type": [
+          "string",
+          "boolean",
+          "number"
+        ],
+        "description": "Allow new client identities to be enrolled automatically when enabled."
+      },
+      "SCOPES": {
+        "type": [
+          "string",
+          "array"
+        ],
+        "description": "Allowed XiotBox scopes for this runtime, such as chat or control."
+      },
+      "CONTROL_ACTIONS": {
+        "type": [
+          "string",
+          "array"
+        ],
+        "description": "Optional allowlist of local control actions exposed by the plugin tools."
+      },
+      "LOCAL_CONTROL_BASE_URL": {
+        "type": "string",
+        "description": "Base URL of the XiotBox local-control service used by optional control tools."
+      },
+      "LOCAL_CONTROL_TOKEN": {
+        "type": "string",
+        "description": "Optional token required by the local-control endpoint."
+      },
+      "LOCAL_CONTROL_TIMEOUT_MS": {
+        "type": "number",
+        "description": "Timeout for local-control HTTP calls in milliseconds."
+      }
     }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable XiotBox Channel"
+    },
+    "name": {
+      "label": "Display Name",
+      "placeholder": "XiotBox Gateway"
+    },
+    "GATEWAY_WSS_URL": {
+      "label": "Gateway WSS URL",
+      "placeholder": "wss://gateway.example/ws/openclaw"
+    },
+    "DEVICE_ID": {
+      "label": "Device ID"
+    },
+    "DEVICE_TOKEN": {
+      "label": "Device Token",
+      "sensitive": true
+    },
+    "USE_QUERY_AUTH": {
+      "label": "Use Query Authentication"
+    },
+    "OUTBOX_MAX": {
+      "label": "Outbox Max"
+    },
+    "OUTBOX_TTL_MS": {
+      "label": "Outbox TTL (ms)"
+    },
+    "COMMAND_CACHE_TTL_MS": {
+      "label": "Command Cache TTL (ms)"
+    },
+    "COMMAND_CACHE_MAX": {
+      "label": "Command Cache Max"
+    },
+    "STREAMING": {
+      "label": "Enable Streaming"
+    },
+    "STREAM_THROTTLE_MS": {
+      "label": "Stream Throttle (ms)"
+    },
+    "PROGRESS_UPDATES": {
+      "label": "Enable Progress Updates"
+    },
+    "PROGRESS_THROTTLE_MS": {
+      "label": "Progress Throttle (ms)"
+    },
+    "PROGRESS_MAX_UPDATES": {
+      "label": "Progress Max Updates"
+    },
+    "API_BASE_URL": {
+      "label": "API Base URL",
+      "placeholder": "https://api.xiotbox.com"
+    },
+    "E2E_KEY_PATH": {
+      "label": "E2E Key Path"
+    },
+    "E2E_ROTATE": {
+      "label": "E2E Rotation Policy"
+    },
+    "IDENTITY_KEY_PATH": {
+      "label": "Identity Key Path"
+    },
+    "TRUST_PATH": {
+      "label": "Trust Store Path"
+    },
+    "ALLOW_NEW_CLIENT_IDENTITIES": {
+      "label": "Allow New Client Identities"
+    },
+    "SCOPES": {
+      "label": "Scopes"
+    },
+    "CONTROL_ACTIONS": {
+      "label": "Allowed Control Actions"
+    },
+    "LOCAL_CONTROL_BASE_URL": {
+      "label": "Local Control Base URL",
+      "placeholder": "http://127.0.0.1:17777"
+    },
+    "LOCAL_CONTROL_TOKEN": {
+      "label": "Local Control Token",
+      "sensitive": true
+    },
+    "LOCAL_CONTROL_TIMEOUT_MS": {
+      "label": "Local Control Timeout (ms)"
+    }
+  }
 }

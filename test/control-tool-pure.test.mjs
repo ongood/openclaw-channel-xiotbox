@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Unit tests for xiotbox-control-tool pure functions.
  * Run with: node --test test/control-tool-pure.test.mjs
  */
@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-// ── Inline pure functions from xiotbox-control-tool.ts ──
+// Inline pure functions from xiotbox-control-tool.ts.
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -85,7 +85,7 @@ function looksLikeLauncherPackage(pkg) {
   return known.has(p);
 }
 
-// ── Tests: normalizePlan ──
+// Tests: normalizePlan
 
 test('normalizePlan returns empty for non-array', () => {
   assert.deepEqual(normalizePlan(null), []);
@@ -127,7 +127,7 @@ test('normalizePlan omits action_id when empty', () => {
   assert.equal(result[0].action_id, undefined);
 });
 
-// ── Tests: normalizeLaunchStrategy ──
+// Tests: normalizeLaunchStrategy
 
 test('normalizeLaunchStrategy defaults to home_click', () => {
   assert.equal(normalizeLaunchStrategy(null), 'home_click');
@@ -147,7 +147,7 @@ test('normalizeLaunchStrategy recognizes fallback_open_app', () => {
   assert.equal(normalizeLaunchStrategy('fallback'), 'fallback_open_app');
 });
 
-// ── Tests: extractForegroundPackage ──
+// Tests: extractForegroundPackage
 
 test('extractForegroundPackage from data.window_package', () => {
   assert.equal(extractForegroundPackage({ data: { window_package: 'com.example.app' } }), 'com.example.app');
@@ -167,7 +167,7 @@ test('extractForegroundPackage returns empty for bad input', () => {
   assert.equal(extractForegroundPackage({ data: {} }), '');
 });
 
-// ── Tests: extractRootBoundsFromTree ──
+// Tests: extractRootBoundsFromTree
 
 test('extractRootBoundsFromTree parses bounds string', () => {
   const result = extractRootBoundsFromTree({ data: { tree: { bounds: '[0,0][1080,2400]' } } });
@@ -190,7 +190,7 @@ test('extractRootBoundsFromTree ensures min w/h of 1', () => {
   assert.equal(result.h, 1);
 });
 
-// ── Tests: looksLikeLauncherPackage ──
+// Tests: looksLikeLauncherPackage
 
 test('looksLikeLauncherPackage detects known launchers', () => {
   assert.equal(looksLikeLauncherPackage('com.miui.home'), true);

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Regression test: consecutive tool-only + NO_REPLY must not loop forever.
  *
  * Tests the exported helper functions and counter logic extracted from channel.ts.
@@ -52,44 +52,72 @@ const HARD_EXIT_PATTERNS = [
   /^\/quit\b/i,
   /^\/chat\b/i,
   /^\/text\b/i,
-  /退出控制/,
-  /结束控制/,
-  /停止操控/,
-  /结束操控/,
-  /停止控制/,
-  /退出操控/,
-  /退出操作/,
-  /结束操作/,
-  /切回聊天/,
-  /恢复聊天/,
-  /只聊天/,
-  /仅聊天/,
   /stop\s*control/i,
   /exit\s*control/i,
   /back\s*to\s*chat/i,
+  /text\s*only/i,
+  /text\s*mode/i,
 ];
 
+const HARD_EXIT_COMMAND_ALIASES = [
+  'exit control',
+  'stop control',
+  'quit control',
+  'back to chat',
+  'switch to chat',
+  'resume chat',
+  'chat only',
+  'text only',
+  'text mode',
+  'leave control mode',
+  '退出控制',
+  '结束控制',
+  '停止操控',
+  '结束操控',
+  '停止控制',
+  '退出操控',
+  '退出操作',
+  '结束操作',
+  '切回聊天',
+  '恢复聊天',
+  '只聊天',
+  '仅聊天',
+];
+
+function normalizeAliasText(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[。.!！?？,，;；:：()[\]{}"'“”‘’]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function isHardExitCommand(text) {
-  const trimmed = (text || '').trim();
-  return HARD_EXIT_PATTERNS.some((re) => re.test(trimmed));
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return false;
+  if (HARD_EXIT_PATTERNS.some((re) => re.test(trimmed))) return true;
+  const normalized = normalizeAliasText(trimmed);
+  return HARD_EXIT_COMMAND_ALIASES.some((alias) => normalized.includes(normalizeAliasText(alias)));
 }
 
 function buildToolSummary(toolNamesSeen) {
   const uniq = Array.from(new Set(toolNamesSeen.map(s => s.trim()).filter(Boolean)));
   if (uniq.length) {
-    return `（已执行: ${uniq.join(', ')}）`;
+    return `(Executed: ${uniq.join(', ')})`;
   }
-  return '（操作已完成）';
+  return '(Operation completed)';
 }
 
 function isLikelyNonSubstantiveAck(text) {
   const normalized = (text || '').trim();
   if (!normalized) return true;
-  const compact = normalized
-    .toLowerCase()
-    .replace(/\s+/g, '')
-    .replace(/[。.!！?？,，;；:]/g, '');
+  const compact = normalizeAliasText(normalized).replace(/\s+/g, '');
   const exactAcks = new Set([
+    'operationcompleted',
+    'operationcomplete',
+    'completed',
+    'complete',
     '操作已完成',
     '操作完成',
     '已完成',
@@ -98,12 +126,23 @@ function isLikelyNonSubstantiveAck(text) {
     'ok',
     'okay',
     'success',
+    'successful',
     'completed',
+    'taskcompleted',
+    'processingcompleted',
     '任务已完成',
     '处理完成',
   ]);
   if (exactAcks.has(compact)) return true;
-  if (compact.length <= 12 && (compact.includes('操作已完成') || compact.includes('任务已完成'))) {
+  if (
+    compact.length <= 20 &&
+    (
+      compact.includes('operationcompleted') ||
+      compact.includes('taskcompleted') ||
+      compact.includes('操作已完成') ||
+      compact.includes('任务已完成')
+    )
+  ) {
     return true;
   }
   return false;
@@ -163,11 +202,11 @@ function buildProgressRunningText(params) {
   if (!segments.length && snapshot?.detail) segments.push(snapshot.detail);
   if (!segments.length && uniqTools.length) segments.push(uniqTools.join(', '));
   const fallbackText = compactProgressText(params.fallbackText, 80);
-  if (!segments.length && fallbackText && /progress|running|执行中|处理中/i.test(fallbackText)) {
+  if (!segments.length && fallbackText && /progress|running|in progress|processing|执行中|处理中/i.test(fallbackText)) {
     segments.push(fallbackText);
   }
-  if (!segments.length) return '正在执行，请稍候…';
-  return `正在执行：${segments.join(' · ')}`;
+  if (!segments.length) return 'Running, please wait…';
+  return `Running: ${segments.join(' · ')}`;
 }
 
 // ── Test harness ──
@@ -243,13 +282,16 @@ test('shouldSkipReply detects NO_REPLY variants', () => {
   assert(shouldSkipReply('NO_REPLY') === true, 'exact NO_REPLY');
   assert(shouldSkipReply('some text NO_REPLY') === true, 'trailing NO_REPLY');
   assert(shouldSkipReply('Hello world') === false, 'normal text');
-  assert(shouldSkipReply('（已执行: xiotbox_control）') === false, 'tool summary');
+  assert(shouldSkipReply('(Executed: xiotbox_control)') === false, 'tool summary');
 });
 
 test('Hard exit commands are detected', () => {
   assert(isHardExitCommand('/stop') === true, '/stop');
   assert(isHardExitCommand('/exit') === true, '/exit');
   assert(isHardExitCommand('/Stop now') === true, '/Stop now');
+  assert(isHardExitCommand('exit control') === true, 'exit control');
+  assert(isHardExitCommand('back to chat') === true, 'back to chat');
+  assert(isHardExitCommand('text only') === true, 'text only');
   assert(isHardExitCommand('退出控制') === true, '退出控制');
   assert(isHardExitCommand('停止操控') === true, '停止操控');
   assert(isHardExitCommand('停止控制') === true, '停止控制');
@@ -257,7 +299,6 @@ test('Hard exit commands are detected', () => {
   assert(isHardExitCommand('结束控制') === true, '结束控制');
   assert(isHardExitCommand('切回聊天') === true, '切回聊天');
   assert(isHardExitCommand('/chat') === true, '/chat');
-  assert(isHardExitCommand('back to chat') === true, 'back to chat');
   assert(isHardExitCommand('帮我打开微信') === false, 'normal message');
   assert(isHardExitCommand('') === false, 'empty');
 });
@@ -275,17 +316,18 @@ test('Hard exit resets counter', () => {
 
 test('buildToolSummary produces dynamic text, not fixed placeholder', () => {
   const s1 = buildToolSummary(['xiotbox_control']);
-  assert(s1 === '（已执行: xiotbox_control）', 'single tool');
+  assert(s1 === '(Executed: xiotbox_control)', 'single tool');
   const s2 = buildToolSummary(['xiotbox_control', 'xiotbox_control', 'bash']);
-  assert(s2 === '（已执行: xiotbox_control, bash）', 'deduped tools');
+  assert(s2 === '(Executed: xiotbox_control, bash)', 'deduped tools');
   const s3 = buildToolSummary([]);
-  assert(s3 === '（操作已完成）', 'no tools');
+  assert(s3 === '(Operation completed)', 'no tools');
   // Must NOT be the old fixed placeholder
   assert(!s1.includes('无额外文字回复'), 'must not contain old placeholder');
 });
 
 test('Ack-only reply is treated as non-substantive', () => {
-  assert(isLikelyNonSubstantiveAck('（操作已完成）') === true, 'ack with brackets');
+  assert(isLikelyNonSubstantiveAck('(Operation completed)') === true, 'ack with brackets');
+  assert(isLikelyNonSubstantiveAck('task completed') === true, 'english task completed ack');
   assert(isLikelyNonSubstantiveAck('任务已完成') === true, 'task completed ack');
   assert(isLikelyNonSubstantiveAck('好的，我已经完成并给你结论：xxx') === false, 'substantive text');
 });
@@ -351,7 +393,7 @@ test('buildProgressRunningText prefers stage/status/percent', () => {
     snapshot: { stage: '拉起本地Core', status: 'running', progressPercent: 35 },
   });
   assert(
-    text === '正在执行：拉起本地Core · running · 35%',
+    text === 'Running: 拉起本地Core · running · 35%',
     'stage+status+percent',
   );
 });
@@ -361,7 +403,7 @@ test('buildProgressRunningText falls back to tool names', () => {
     toolNames: ['xiotbox_control', 'xiotbox_control', 'bash'],
     snapshot: null,
   });
-  assert(text === '正在执行：xiotbox_control, bash', 'tool-name fallback');
+  assert(text === 'Running: xiotbox_control, bash', 'tool-name fallback');
 });
 
 // ── Summary ──

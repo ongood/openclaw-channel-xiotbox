@@ -1,47 +1,49 @@
-# OpenClaw 插件接手文档
+# OpenClaw Plugin Handover Notes
 
-> 仓库：`openclaw-channel-xiotbox`
-> 角色：OpenClaw <-> XiotBox 网关桥接插件
+> Repository: `openclaw-channel-xiotbox`
+> Role: OpenClaw <-> XiotBox Gateway bridge plugin
 
-## 1. 仓库定位
+## 1. Repository purpose
 
-这个仓库是 OpenClaw 侧执行器，负责把 XiotBox 命令转成 OpenClaw runtime 调用，再把结果按 XiotBox 协议回传。
+This repository implements the OpenClaw-side executor/bridge that converts XiotBox
+commands into OpenClaw runtime calls and returns results using the XiotBox protocol.
 
-## 2. 关键文件
+## 2. Important files
 
-- 命令主流程：`src/channel.ts`
-- E2E 实现：`src/e2e.ts`
-- 运行时桥接：`src/runtime.ts`
-- 发布产物：`dist/`（插件安装实际使用）
-- 版本文件：`openclaw.plugin.json`、`package.json`
-- BotDrop 一键入口：`scripts/bootstrap_xiotbox_termux.sh`
-- 健康检查：`scripts/health_check_xiotbox.sh`
+- Main command flow: `src/channel.ts`
+- E2E implementation: `src/e2e.ts`
+- Runtime bridge: `src/runtime.ts`
+- Build output used in installation: `dist/`
+- Version metadata: `openclaw.plugin.json`, `package.json`
+- BotDrop bootstrap entrypoint: `scripts/bootstrap_xiotbox_termux.sh`
+- Health check helper: `scripts/health_check_xiotbox.sh`
 
-## 3. 当前关键约束
+## 3. Current hard constraints
 
-1. 回包加密目标必须绑定“本次请求的发送端 key/session”
-2. 无法解析发送端 key 时必须 fail closed（不要返回不可解密 success）
-3. identity trust 变化必须显式报错（`client_identity_changed`）
+1. Encrypted replies must be bound to the sender key/session of the current request.
+2. If the sender key cannot be resolved, fail closed. Do not return undecryptable success payloads.
+3. Identity-trust changes must surface explicit errors such as `client_identity_changed`.
 
-## 4. 多端漫游阶段策略
+## 4. Multi-client roaming strategy
 
-当前采用多信封思路（`e2e_multi`），保证同一消息可被不同客户端各自解密。
+The current implementation uses a multi-envelope strategy (`e2e_multi`) so the same
+message can be decrypted independently by multiple clients.
 
-不要退化成服务端明文中转。
+Do not regress this into a server-side plaintext relay.
 
-## 5. 发布规则（必须遵守）
+## 5. Release rules
 
-每次插件改动后必须：
+Every functional plugin change must also include:
 
-1. 更新 `src/`
-2. 重新构建 `dist/`
-3. 更新版本号
-4. 打 tag 并推送远端
+1. Updates in `src/`
+2. A rebuilt `dist/`
+3. A version bump
+4. A new tag and remote push
 
-否则用户拉取 tag 后无法得到实际修复。
+Otherwise users who install by tag will not actually receive the intended fix.
 
-## 6. 快速验证
+## 6. Quick validation
 
-1. OpenClaw 收到加密请求可成功解密
-2. 回包在 PC/iOS 都能被各自解密
-3. 不出现持续 `client_identity_changed` 或大面积 `[Encrypted payload]`
+1. OpenClaw can decrypt the inbound request successfully
+2. Replies can be decrypted correctly on both PC and iOS clients
+3. There are no recurring `client_identity_changed` errors or widespread `[Encrypted payload]` fallback output

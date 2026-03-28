@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Unit tests for normalizeTextPayload — text extraction from various payload shapes.
  * Run with: node --test test/normalize-text.test.mjs
  */

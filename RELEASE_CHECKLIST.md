@@ -1,30 +1,30 @@
-# XiotBox 插件更新/发布清单
+# XiotBox Plugin Release Checklist
 
-本文档用于每次更新 `openclaw-channel-xiotbox` 时执行固定动作，避免遗漏。
+Use this checklist whenever you prepare a new release of `openclaw-channel-xiotbox`.
 
-## 1. 开始前检查
+## 1. Pre-flight checks
 
 ```bash
 git status --short
 git branch --show-current
 ```
 
-- 确保在正确分支（当前是 `1.0`）。
-- 确保你知道本次目标版本号（例如 `1.0.25`）。
+- Confirm you are on the intended branch.
+- Confirm the target release version (for example `2.0.16`).
 
-## 2. 代码与标识一致性
+## 2. Identifier consistency
 
-每次更新都要确认以下标识保持统一：
+These identifiers must stay aligned on every release:
 
 - plugin id: `xiotbox`
 - channel id: `xiotbox`
-- 安装目录: `~/.openclaw/extensions/xiotbox`
-- 配置 key:
+- install directory: `~/.openclaw/extensions/xiotbox`
+- config keys:
   - `plugins.entries.xiotbox`
   - `plugins.installs.xiotbox`
   - `channels.xiotbox`
 
-重点检查文件：
+Files to verify:
 
 - `openclaw.plugin.json`
 - `index.ts`
@@ -32,25 +32,25 @@ git branch --show-current
 - `package.json` (`openclaw.install.localPath`)
 - `scripts/update_openclaw_xiotbox.sh`
 
-## 3. 版本号同步
+## 3. Version synchronization
 
-把版本号统一改成本次发布版本（示例 `1.0.25`）：
+Update the release version consistently in:
 
-- `package.json` 的 `version`
-- `scripts/update_openclaw_xiotbox.sh` 的默认 `TAG`
-- `scripts/install_configure_xiotbox.sh` 的默认 `TAG`
-- `scripts/test_install_xiotbox_termux.sh` 的默认 git tag
-- `scripts/bootstrap_xiotbox_termux.sh` 的默认 `TAG`
-- `README.md` 中安装/升级示例 tag
+- `package.json` -> `version`
+- `scripts/update_openclaw_xiotbox.sh` default `TAG`
+- `scripts/install_configure_xiotbox.sh` default `TAG`
+- `scripts/test_install_xiotbox_termux.sh` default Git tag
+- `scripts/bootstrap_xiotbox_termux.sh` default `TAG`
+- `README.md` examples that mention release tags
 
-## 4. 构建产物
+## 4. Build artifacts
 
 ```bash
 npm install
 npm run build
 ```
 
-确认以下产物存在并已更新：
+Verify these artifacts exist and are fresh:
 
 - `dist/index.js`
 - `dist/src/channel.js`
@@ -58,7 +58,7 @@ npm run build
 - `dist/src/e2e.js`
 - `dist/wss_client.js`
 
-## 5. 基础自检
+## 5. Basic repository checks
 
 ```bash
 bash -n scripts/update_openclaw_xiotbox.sh
@@ -66,7 +66,7 @@ rg -n "\"id\": \"xiotbox\"|id: 'xiotbox'" openclaw.plugin.json index.ts dist/ind
 rg -n "extensions/xiotbox|plugins\\.entries\\.xiotbox|plugins\\.installs\\.xiotbox|channels\\.xiotbox" README.md package.json scripts/update_openclaw_xiotbox.sh
 ```
 
-## 6. 本地升级迁移验证（推荐）
+## 6. Recommended local upgrade validation
 
 ```bash
 bash scripts/update_openclaw_xiotbox.sh <VERSION>
@@ -75,13 +75,13 @@ openclaw channels list
 openclaw doctor --fix
 ```
 
-检查点：
+Checks:
 
-- `plugins list` 中插件 ID 为 `xiotbox`，状态 `loaded`
-- `channels list` 中有 `XiotBox`
-- `~/.openclaw/openclaw.json` 不再出现 `openclaw-channel-xiotbox` 旧键
+- `plugins list` shows plugin id `xiotbox` and a loaded status
+- `channels list` shows `XiotBox`
+- `~/.openclaw/openclaw.json` no longer contains stale `openclaw-channel-xiotbox` keys
 
-## 7. 提交、打 tag、推送
+## 7. Commit, tag, and push
 
 ```bash
 git add .
@@ -91,21 +91,21 @@ git push origin HEAD
 git push origin <VERSION>
 ```
 
-示例（发布 `1.0.25`）：
+Example:
 
 ```bash
-git commit -m "release: 1.0.25"
-git tag -a 1.0.25 -m "release 1.0.25"
+git commit -m "release: 2.0.16"
+git tag -a 2.0.16 -m "release 2.0.16"
 git push origin HEAD
-git push origin 1.0.25
+git push origin 2.0.16
 ```
 
-## 8. 发布后确认
+## 8. Post-release confirmation
 
 ```bash
 git show --no-patch --decorate <VERSION>
 git tag -l | tail
 ```
 
-- 确认 tag 指向正确 commit。
-- 在 GitHub 上确认 tag 已可见。
+- Confirm the tag points to the intended commit.
+- Confirm the tag is visible on GitHub.

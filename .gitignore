@@ -1,16 +1,16 @@
-# 依赖
+# Dependencies
 node_modules/
 package-lock.json
 
-# 配置文件（包含敏感凭证）
+# Configuration files (may contain sensitive credentials)
 config.json
 .env
 .env.model
 
-# 日志
+# Logs
 *.log
 
-# 操作系统
+# Operating system artifacts
 .DS_Store
 Thumbs.db
 

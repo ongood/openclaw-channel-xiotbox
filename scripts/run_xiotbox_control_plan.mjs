@@ -58,10 +58,10 @@ function buildExamples() {
   const fixedActionId = `dedupe_${now}`;
   return {
     // Use-case 1: high-level launch (prefer UI click launch; open_app is fallback).
-    1: [{ action: 'launch_app', params: { app_name: '设置', strategy: 'home_click' } }],
+    1: [{ action: 'launch_app', params: { app_name: 'Settings', strategy: 'home_click' } }],
     // Use-case 2: launch app -> tap -> type (observe-before-operate is injected for UI actions).
     2: [
-      { action: 'launch_app', params: { app_name: '设置', package: 'com.android.settings' } },
+      { action: 'launch_app', params: { app_name: 'Settings', package: 'com.android.settings' } },
       { action: 'tap', params: { x: 520, y: 1480 } },
       { action: 'type', params: { text: 'hello' } },
     ],

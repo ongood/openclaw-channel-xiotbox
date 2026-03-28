@@ -85,9 +85,9 @@ function defaultSecrets() {
     };
 }
 /**
- * Optional one-shot migration from legacy local config.json at package root
+ * Optional one-shot migration from the legacy package-root config.json
  * (used by older bridge/config tooling) into the unified OPENCLAW_HOME/xiotbox
- * layout. This does NOT read any environment variables and only touches
+ * layout. This does not read environment variables and only touches
  * existing JSON files.
  */
 function migrateLegacyConfigIfNeeded(configPath, secretPath) {

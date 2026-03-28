@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const pkg = require('./package.json');
 
 /**
- * 加载配置（统一从 OPENCLAW_HOME/xiotbox/config.json + secret.json）
+ * Load config from the unified OPENCLAW_HOME/xiotbox/config.json + secret.json layout.
  */
 function load() {
     const runtime = loadRuntimeConfig();
@@ -39,7 +39,7 @@ function load() {
 }
 
 /**
- * 保存配置到文件（只保存设备凭证）
+ * Persist config to disk (device credentials only).
  */
 function save(config) {
     const runtime = loadRuntimeConfig();
@@ -79,7 +79,7 @@ function save(config) {
 }
 
 /**
- * 执行配对流程（使用 pair_code 换取 device_token）
+ * Run the pairing flow (exchange pair_code for device_token).
  */
 async function pair(config) {
     if (!config.PAIR_CODE) {
@@ -96,7 +96,7 @@ async function pair(config) {
     console.log('[Pairing] Exchanging pair_code for device_token...');
     console.log('[Pairing] Gateway:', apiUrl);
 
-    // 准备设备信息
+    // Prepare device information sent during pairing.
     const deviceInfo = {
         hostname: os.hostname(),
         version: pkg.version,
@@ -115,14 +115,14 @@ async function pair(config) {
             device_info: deviceInfo
         });
 
-        // 更新配置
+        // Update in-memory config with the paired device credentials.
         config.DEVICE_ID = resp.device_id;
         config.DEVICE_TOKEN = resp.device_token;
 
-        // 保存到文件
+        // Persist the new credentials to disk.
         save(config);
 
-        console.log('[Pairing] ✓ Success!');
+  console.log('[Pairing] Success!');
         console.log('[Pairing] Device ID:', config.DEVICE_ID);
 
     } catch (err) {
@@ -131,7 +131,7 @@ async function pair(config) {
 }
 
 /**
- * HTTP POST 请求
+ * HTTP POST helper.
  */
 function httpPost(url, data) {
     return new Promise((resolve, reject) => {

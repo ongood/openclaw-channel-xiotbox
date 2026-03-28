@@ -12,25 +12,25 @@ try {
 }
 
 /**
- * WSS 客户端
- * 负责与 XiotBox Gateway 的 WebSocket 连接管理
+ * WSS client.
+ * Manages the WebSocket connection to XiotBox Gateway.
  */
 class WSSClient extends EventEmitter {
     constructor(config) {
         super();
         this.config = config;
         this.ws = null;
-        this.seq = 0;  // 消息序列号
-        this.reconnectDelay = 1000;  // 初始重连延迟 1 秒
-        this.maxReconnectDelay = 60000;  // 最大重连延迟 60 秒
+        this.seq = 0;  // Message sequence number
+        this.reconnectDelay = 1000;  // Initial reconnect delay: 1 second
+        this.maxReconnectDelay = 60000;  // Max reconnect delay: 60 seconds
         this.heartbeatInterval = null;
-        this.isManualDisconnect = false;  // 是否手动断开
+        this.isManualDisconnect = false;  // Whether the disconnect was intentional
         this.outbox = [];
         this.maxOutbox = config.OUTBOX_MAX || 200;
         this.outboxTtlMs = config.OUTBOX_TTL_MS || 5 * 60 * 1000;
         this.helloExtra = config.HELLO_EXTRA || {};
         // Default to chat only. Control scope should be enabled on the device that executes
-        // control actions (e.g. XiotBox Android Control Agent), not on the host OpenClaw.
+        // control actions (for example XiotBox Android Control Agent), not on the host OpenClaw.
         this.scopes = Array.isArray(config.SCOPES) ? config.SCOPES : ['chat'];
         this.controlActions = Array.isArray(config.CONTROL_ACTIONS) ? config.CONTROL_ACTIONS : [];
         this.parseWarnWindowMs = 10000;
@@ -39,12 +39,13 @@ class WSSClient extends EventEmitter {
     }
 
     /**
-     * 连接到 Gateway
+     * Connect to the Gateway.
      */
     async connect() {
         return new Promise((resolve, reject) => {
             this.isManualDisconnect = false;
-            // 构建 WSS URL（附带设备凭证）
+
+            // Build the WSS URL, optionally including device credentials.
             const url = this._buildWsUrl();
 
             console.log('[WSS] Connecting to gateway...');
@@ -52,54 +53,54 @@ class WSSClient extends EventEmitter {
             this.ws = new WebSocket(url, {
                 headers: {
                     'User-Agent': `openclaw-xiotbox/${pkg.version}`,
-                    ...(this.config.DEVICE_TOKEN ? { 'Authorization': `Bearer ${this.config.DEVICE_TOKEN}` } : {}),
+                    ...(this.config.DEVICE_TOKEN ? { Authorization: `Bearer ${this.config.DEVICE_TOKEN}` } : {}),
                     ...(this.config.DEVICE_ID ? { 'X-Device-Id': this.config.DEVICE_ID } : {}),
                     ...(this.scopes.length ? { 'X-OpenClaw-Scopes': this.scopes.join(',') } : {}),
-                }
+                },
             });
 
-            // 连接成功
+            // Connection opened
             this.ws.on('open', () => {
                 console.log('[WSS] Connection established');
-                this.reconnectDelay = 1000;  // 重置退避延迟
+                this.reconnectDelay = 1000;  // Reset backoff delay
                 this.emit('connected');
 
-                // 发送 HELLO（上报设备信息）
+                // Send HELLO with device/runtime metadata.
                 this.sendHello();
 
-                // 开始心跳
+                // Start heartbeat loop.
                 this.startHeartbeat();
 
-                // 发送离线期间积压的消息
+                // Flush messages buffered while offline.
                 this.flushOutbox();
 
                 resolve();
             });
 
-            // 接收消息
+            // Incoming message frames
             this.ws.on('message', (data, isBinary) => {
                 this._onRawMessage(data, isBinary);
             });
 
-            // 连接关闭
+            // Connection closed
             this.ws.on('close', (code, reason) => {
                 console.log(`[WSS] Connection closed (code: ${code}, reason: ${reason || 'none'})`);
                 this.emit('disconnected');
                 this.stopHeartbeat();
                 this.ws = null;
 
-                // 如果不是手动断开，则自动重连
+                // Auto-reconnect unless the disconnect was intentional.
                 if (!this.isManualDisconnect) {
                     this.scheduleReconnect();
                 }
             });
 
-            // 连接错误
+            // Connection error
             this.ws.on('error', (err) => {
                 console.error('[WSS] Connection error:', err.message);
                 this.emit('error', err);
 
-                // 如果还在连接阶段，reject Promise
+                // Reject the connect promise if the socket is still connecting.
                 if (this.ws.readyState === WebSocket.CONNECTING) {
                     reject(err);
                 }
@@ -108,7 +109,7 @@ class WSSClient extends EventEmitter {
     }
 
     /**
-     * 断开连接（手动）
+     * Disconnect manually.
      */
     async disconnect() {
         this.isManualDisconnect = true;
@@ -120,34 +121,34 @@ class WSSClient extends EventEmitter {
     }
 
     /**
-     * 计划重连（指数退避 + 抖动）
+     * Schedule reconnect with exponential backoff and jitter.
      */
     scheduleReconnect() {
-        // 指数退避 + 随机抖动（避免集中重连）
+        // Exponential backoff + jitter to avoid reconnect storms.
         const jitter = Math.random() * 1000;
         const delay = Math.min(this.reconnectDelay + jitter, this.maxReconnectDelay);
 
         console.log(`[WSS] Reconnecting in ${Math.round(delay / 1000)}s...`);
 
         setTimeout(() => {
-            this.connect().catch(err => {
+            this.connect().catch((err) => {
                 console.error('[WSS] Reconnect failed:', err.message);
             });
         }, delay);
 
-        // 指数增长（1s -> 2s -> 4s -> 8s -> ... -> 60s）
+        // Exponential growth: 1s -> 2s -> 4s -> 8s -> ... -> 60s
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
     }
 
     /**
-     * 发送 HELLO 消息（上报设备信息）
+     * Send the HELLO message with device/runtime metadata.
      */
     sendHello() {
         const payload = {
             version: pkg.version,
             capabilities: {
                 commands: ['help', 'status', 'ping', 'version'],
-                streaming: false,  // 暂不支持流式输出
+                streaming: false,  // Streaming output is not supported here
                 max_command_length: 10000,
                 control_actions: this.controlActions,
                 scopes: this.scopes,
@@ -156,9 +157,10 @@ class WSSClient extends EventEmitter {
                 platform: process.platform,
                 arch: process.arch,
                 node_version: process.version,
-                hostname: os.hostname()
-            }
+                hostname: os.hostname(),
+            },
         };
+
         // Merge so late-bound config.HELLO_EXTRA still works even if helloExtra was
         // initialized as an empty object at construction time.
         const extra = { ...(this.config?.HELLO_EXTRA || {}), ...(this.helloExtra || {}) };
@@ -178,28 +180,28 @@ class WSSClient extends EventEmitter {
     }
 
     /**
-     * 开始心跳（15 秒间隔）
+     * Start heartbeat loop (15 second interval).
      */
     startHeartbeat() {
         this.heartbeatInterval = setInterval(() => {
             this.sendMessage('HEARTBEAT', {
-                // Keep plugin_version fresh on server even when no reconnect/HELLO.
+                // Keep plugin_version fresh on the server even when there is no reconnect/HELLO.
                 version: pkg.version,
                 runtime: {
                     platform: process.platform,
                     arch: process.arch,
                     node_version: process.version,
-                    hostname: os.hostname()
+                    hostname: os.hostname(),
                 },
                 uptime: process.uptime(),
                 memory: process.memoryUsage(),
-                cpu: process.cpuUsage()
+                cpu: process.cpuUsage(),
             });
-        }, 15000);  // 15 秒心跳
+        }, 15000);  // 15 second heartbeat
     }
 
     /**
-     * 停止心跳
+     * Stop heartbeat loop.
      */
     stopHeartbeat() {
         if (this.heartbeatInterval) {
@@ -209,7 +211,7 @@ class WSSClient extends EventEmitter {
     }
 
     /**
-     * 发送消息（统一信封格式）
+     * Send a message in the shared envelope format.
      */
     sendMessage(type, payload) {
         const envelope = {
@@ -219,31 +221,31 @@ class WSSClient extends EventEmitter {
             device_id: this.config.DEVICE_ID,
             seq: ++this.seq,
             trace_id: payload.trace_id || null,
-            payload
+            payload,
         };
 
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify(envelope));
         } else {
-            // 缓存到队列，等重连后再发送
+            // Buffer the message and send it after reconnect.
             this._enqueue(envelope);
             console.warn(`[WSS] Cannot send message: connection not open (state: ${this.ws ? this.ws.readyState : 'null'})`);
         }
     }
 
     /**
-     * 处理接收到的消息
+     * Handle a decoded inbound message.
      */
     handleMessage(msg) {
         const { type, payload } = msg;
 
         switch (type) {
             case 'HEARTBEAT_ACK':
-                // 心跳响应，静默处理
+                // Heartbeat response: ignore silently.
                 break;
 
             case 'COMMAND':
-                // 触发命令事件（由 channel 处理）
+                // Forward command events to the channel layer.
                 this.emit('COMMAND', payload);
                 break;
 
@@ -327,15 +329,15 @@ class WSSClient extends EventEmitter {
     }
 
     /**
-     * 构建连接 URL
-     * 默认路径: /ws/bot/{device_id}（Gateway bot 端点）
-     * 如果 USE_QUERY_AUTH=true，则把 token 放到 query 参数里
+     * Build the connection URL.
+     * Default path: /ws/bot/{device_id} (Gateway bot endpoint)
+     * If USE_QUERY_AUTH=true, send token via query string.
      */
     _buildWsUrl() {
         let baseUrl = this.config.GATEWAY_WSS_URL;
         const deviceId = this.config.DEVICE_ID;
 
-        // Auto-append device_id to path if URL ends with /ws/bot or /ws/bot/
+        // Auto-append device_id to the path if the URL ends with /ws/bot or /ws/bot/
         if (deviceId && /\/ws\/bot\/?$/.test(baseUrl)) {
             baseUrl = baseUrl.replace(/\/+$/, '') + '/' + encodeURIComponent(deviceId);
         }
@@ -349,7 +351,7 @@ class WSSClient extends EventEmitter {
             urlObj.searchParams.set('token', this.config.DEVICE_TOKEN);
             return urlObj.toString();
         } catch (err) {
-            // fallback
+            // Fallback for callers that pass a non-standard URL-like string.
             return `${baseUrl}?device_id=${encodeURIComponent(deviceId)}&token=${encodeURIComponent(this.config.DEVICE_TOKEN)}`;
         }
     }
@@ -357,7 +359,7 @@ class WSSClient extends EventEmitter {
     _enqueue(envelope) {
         const now = Date.now();
         this.outbox.push({ envelope, ts: now });
-        // trim oldest
+        // Trim oldest entries if the buffer grows beyond the limit.
         while (this.outbox.length > this.maxOutbox) {
             this.outbox.shift();
         }
@@ -373,7 +375,7 @@ class WSSClient extends EventEmitter {
             try {
                 this.ws.send(JSON.stringify(item.envelope));
             } catch (err) {
-                // re-queue if send fails
+                // Re-queue if send fails.
                 this._enqueue(item.envelope);
                 break;
             }
