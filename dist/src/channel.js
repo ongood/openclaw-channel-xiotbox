@@ -18,6 +18,8 @@ const CONTEXT_EPOCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CONTEXT_EPOCH_CACHE_MAX = 2000;
 let sessionStoreCache = null;
 const contextEpochCache = new Map();
+const activeGatewayAccounts = new Map();
+let gatewayInstanceSeq = 0;
 function normalizeAccountId(value) {
     const normalized = String(value || '').trim();
     return normalized || DEFAULT_ACCOUNT_ID;
@@ -1390,6 +1392,7 @@ export const xiotboxPlugin = {
         startAccount: async (ctx) => {
             const { cfg, log } = ctx;
             const accountId = DEFAULT_ACCOUNT_ID;
+            const instanceId = ++gatewayInstanceSeq;
             const finalCfg = buildConfig(getChannelConfig(cfg));
             log?.info?.(`[XiotBox][${accountId}] remote streaming config ` +
                 `(STREAMING=${finalCfg.STREAMING}, ` +
@@ -1400,7 +1403,39 @@ export const xiotboxPlugin = {
                 log?.error?.(`[XiotBox][${accountId}] ${err}`);
                 throw new Error(err);
             }
+            const existing = activeGatewayAccounts.get(accountId);
+            if (existing) {
+                log?.warn?.(`[XiotBox][${accountId}] startAccount called while an instance is already active ` +
+                    `(old_instance=${existing.instanceId}, new_instance=${instanceId})`);
+                if (existing.stop) {
+                    try {
+                        await existing.stop('replaced_by_new_start');
+                    }
+                    catch (err) {
+                        log?.warn?.(`[XiotBox][${accountId}] failed to stop previous gateway instance: ${err?.message || err}`);
+                    }
+                }
+            }
+            activeGatewayAccounts.set(accountId, {
+                instanceId,
+                startedAt: Date.now(),
+                stop: null,
+            });
+            const isCurrentInstance = () => activeGatewayAccounts.get(accountId)?.instanceId === instanceId;
             const client = new WSSClient(finalCfg);
+            const stopCurrent = async (reason = 'stop') => {
+                const current = activeGatewayAccounts.get(accountId);
+                if (current?.instanceId === instanceId) {
+                    activeGatewayAccounts.delete(accountId);
+                }
+                log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
+                await client.disconnect();
+            };
+            activeGatewayAccounts.set(accountId, {
+                instanceId,
+                startedAt: Date.now(),
+                stop: stopCurrent,
+            });
             const runtime = getXiotboxRuntime();
             const dispatchReply = runtime?.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher;
             if (!dispatchReply) {
@@ -2244,11 +2279,26 @@ export const xiotboxPlugin = {
             client.on('auth_required', (payload) => {
                 log?.error?.(`[XiotBox][${accountId}] Gateway auth required (remote channel paused): ${payload?.message || payload?.code || 'REAUTH_REQUIRED'}`);
             });
-            await client.connect();
+            if (!isCurrentInstance()) {
+                await client.disconnect();
+                throw new Error(`gateway_instance_superseded_before_connect:${instanceId}`);
+            }
+            try {
+                await client.connect();
+            }
+            catch (err) {
+                if (isCurrentInstance()) {
+                    activeGatewayAccounts.delete(accountId);
+                }
+                throw err;
+            }
+            if (!isCurrentInstance()) {
+                await client.disconnect();
+                throw new Error(`gateway_instance_superseded_after_connect:${instanceId}`);
+            }
             return {
                 stop: async () => {
-                    log?.info?.(`[XiotBox][${accountId}] Stopping channel...`);
-                    await client.disconnect();
+                    await stopCurrent('host_stop');
                 },
             };
         },
