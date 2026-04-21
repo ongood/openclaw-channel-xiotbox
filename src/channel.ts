@@ -339,6 +339,19 @@ function buildConfig(channelCfg: any) {
   };
 }
 
+async function waitForAbortSignal(abortSignal?: AbortSignal | null): Promise<void> {
+  if (!abortSignal || abortSignal.aborted) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const onAbort = () => {
+      abortSignal.removeEventListener('abort', onAbort);
+      resolve();
+    };
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /**
  * Robust text extraction:
  * - supports common fields (markdown/text/body/output_text/etc.)
@@ -1549,7 +1562,7 @@ export const xiotboxPlugin = {
   },
   gateway: {
     startAccount: async (ctx: any) => {
-      const { cfg, log } = ctx;
+      const { cfg, log, abortSignal } = ctx;
       const accountId = DEFAULT_ACCOUNT_ID;
       const instanceId = ++gatewayInstanceSeq;
       const finalCfg = buildConfig(getChannelConfig(cfg));
@@ -1591,13 +1604,20 @@ export const xiotboxPlugin = {
       const isCurrentInstance = () => activeGatewayAccounts.get(accountId)?.instanceId === instanceId;
 
       const client = new WSSClient(finalCfg);
+      let stopPromise: Promise<void> | null = null;
       const stopCurrent = async (reason = 'stop') => {
+        if (stopPromise) {
+          return stopPromise;
+        }
+        stopPromise = (async () => {
         const current = activeGatewayAccounts.get(accountId);
         if (current?.instanceId === instanceId) {
           activeGatewayAccounts.delete(accountId);
         }
         log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
         await client.disconnect();
+        })();
+        return stopPromise;
       };
       activeGatewayAccounts.set(accountId, {
         instanceId,
@@ -2539,6 +2559,10 @@ export const xiotboxPlugin = {
         await client.disconnect();
         throw new Error(`gateway_instance_superseded_before_connect:${instanceId}`);
       }
+      if (abortSignal?.aborted) {
+        await stopCurrent('aborted_before_connect');
+        return;
+      }
 
       try {
         await client.connect();
@@ -2553,12 +2577,16 @@ export const xiotboxPlugin = {
         await client.disconnect();
         throw new Error(`gateway_instance_superseded_after_connect:${instanceId}`);
       }
+      if (abortSignal?.aborted) {
+        await stopCurrent('aborted_after_connect');
+        return;
+      }
 
-      return {
-        stop: async () => {
-          await stopCurrent('host_stop');
-        },
-      };
+      // Keep the channel task alive until OpenClaw explicitly aborts it.
+      // Resolving startAccount() immediately makes the host treat the channel
+      // as exited, which triggers the gateway auto-restart loop.
+      await waitForAbortSignal(abortSignal);
+      await stopCurrent('abort_signal');
     },
   },
   status: {
