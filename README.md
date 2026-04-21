@@ -56,6 +56,12 @@ After installation, restart the OpenClaw Gateway if your environment does not au
 openclaw gateway restart
 ```
 
+On Linux/systemd deployments that run `openclaw-gateway` as a service, restart the service explicitly after plugin upgrades:
+
+```bash
+systemctl restart openclaw-gateway
+```
+
 ### Option B: Source checkout for bridge mode
 
 ```bash
@@ -253,6 +259,46 @@ This is the tool to use when OpenClaw should run on one host while a remote devi
 - Check `GATEWAY_WSS_URL`.
 - Check `DEVICE_ID` and `DEVICE_TOKEN`.
 - Check whether the target gateway expects `USE_QUERY_AUTH=true`.
+
+### The local OpenClaw Gateway says `pairing required` or `scope-upgrade`
+
+This can happen after the local OpenClaw control-side identity was previously approved
+with only `operator.read`, but the current chat/control flow now needs higher scopes
+such as `operator.write`, `operator.pairing`, `operator.admin`, or
+`operator.talk.secrets`.
+
+Typical symptoms:
+
+- `gateway connect failed: GatewayClientRequestError: pairing required`
+- `security audit: device access upgrade requested reason=scope-upgrade`
+- local chat/control requests hang because the local gateway rejects the upgraded session
+
+Check pending approvals:
+
+```bash
+openclaw devices list
+```
+
+Approve the latest pending local scope-upgrade request:
+
+```bash
+openclaw devices approve --latest
+```
+
+Or approve a specific request id:
+
+```bash
+openclaw devices approve <requestId>
+```
+
+Then reconnect or restart the local gateway:
+
+```bash
+systemctl restart openclaw-gateway
+```
+
+This approval should normally only be needed once per local control identity unless
+the identity changes or the approved scope set is reset.
 
 ### Bridge mode starts but cannot reach OpenClaw
 
