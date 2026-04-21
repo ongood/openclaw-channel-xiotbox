@@ -279,17 +279,15 @@ Check pending approvals:
 openclaw devices list
 ```
 
-Approve the latest pending local scope-upgrade request:
-
-```bash
-openclaw devices approve --latest
-```
-
-Or approve a specific request id:
+Approve the specific pending request id:
 
 ```bash
 openclaw devices approve <requestId>
 ```
+
+In practice this is more reliable than `openclaw devices approve --latest` for
+local scope-upgrade approvals, because some OpenClaw builds may not resolve the
+intended pending request consistently.
 
 Then reconnect or restart the local gateway:
 

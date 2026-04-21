@@ -137,7 +137,7 @@ inspect and approve the pending request once:
 
 ```bash
 openclaw devices list
-openclaw devices approve --latest
+openclaw devices approve <requestId>
 ```
 
 ## 6. Recommended validation
