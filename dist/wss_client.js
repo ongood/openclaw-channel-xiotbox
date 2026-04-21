@@ -28,6 +28,9 @@ class WSSClient extends EventEmitter {
         this.maxOutbox = config.OUTBOX_MAX || 200;
         this.outboxTtlMs = config.OUTBOX_TTL_MS || 5 * 60 * 1000;
         this.helloExtra = config.HELLO_EXTRA || {};
+        this.reconnectTimer = null;
+        this.connectPromise = null;
+        this.socketEpoch = 0;
         // Default to chat only. Control scope should be enabled on the device that executes
         // control actions (for example XiotBox Android Control Agent), not on the host OpenClaw.
         this.scopes = Array.isArray(config.SCOPES) ? config.SCOPES : ['chat'];
@@ -40,12 +43,33 @@ class WSSClient extends EventEmitter {
      * Connect to the Gateway.
      */
     async connect() {
-        return new Promise((resolve, reject) => {
-            this.isManualDisconnect = false;
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            return Promise.resolve();
+        }
+        if (this.connectPromise) {
+            return this.connectPromise;
+        }
+        this.isManualDisconnect = false;
+        this._clearReconnectTimer();
+        const connectEpoch = ++this.socketEpoch;
+        this.connectPromise = new Promise((resolve, reject) => {
+            let settled = false;
+            const finishResolve = () => {
+                if (settled)
+                    return;
+                settled = true;
+                resolve();
+            };
+            const finishReject = (err) => {
+                if (settled)
+                    return;
+                settled = true;
+                reject(err);
+            };
             // Build the WSS URL, optionally including device credentials.
             const url = this._buildWsUrl();
             console.log('[WSS] Connecting to gateway...');
-            this.ws = new WebSocket(url, {
+            const ws = new WebSocket(url, {
                 headers: {
                     'User-Agent': `openclaw-xiotbox/${pkg.version}`,
                     ...(this.config.DEVICE_TOKEN ? { Authorization: `Bearer ${this.config.DEVICE_TOKEN}` } : {}),
@@ -53,8 +77,17 @@ class WSSClient extends EventEmitter {
                     ...(this.scopes.length ? { 'X-OpenClaw-Scopes': this.scopes.join(',') } : {}),
                 },
             });
+            this.ws = ws;
             // Connection opened
-            this.ws.on('open', () => {
+            ws.on('open', () => {
+                if (this.ws !== ws || connectEpoch !== this.socketEpoch) {
+                    try {
+                        ws.close(1000, 'superseded');
+                    }
+                    catch (err) { }
+                    finishResolve();
+                    return;
+                }
                 console.log('[WSS] Connection established');
                 this.reconnectDelay = 1000; // Reset backoff delay
                 this.emit('connected');
@@ -64,39 +97,55 @@ class WSSClient extends EventEmitter {
                 this.startHeartbeat();
                 // Flush messages buffered while offline.
                 this.flushOutbox();
-                resolve();
+                finishResolve();
             });
             // Incoming message frames
-            this.ws.on('message', (data, isBinary) => {
+            ws.on('message', (data, isBinary) => {
+                if (this.ws !== ws || connectEpoch !== this.socketEpoch)
+                    return;
                 this._onRawMessage(data, isBinary);
             });
             // Connection closed
-            this.ws.on('close', (code, reason) => {
+            ws.on('close', (code, reason) => {
+                const isCurrent = this.ws === ws && connectEpoch === this.socketEpoch;
                 console.log(`[WSS] Connection closed (code: ${code}, reason: ${reason || 'none'})`);
                 this.emit('disconnected');
-                this.stopHeartbeat();
-                this.ws = null;
+                if (isCurrent) {
+                    this.stopHeartbeat();
+                    this.ws = null;
+                }
+                if (!settled) {
+                    finishReject(new Error(`WebSocket closed before ready (code=${code})`));
+                }
                 // Auto-reconnect unless the disconnect was intentional.
-                if (!this.isManualDisconnect) {
+                if (!this.isManualDisconnect && isCurrent) {
                     this.scheduleReconnect();
                 }
             });
             // Connection error
-            this.ws.on('error', (err) => {
+            ws.on('error', (err) => {
                 console.error('[WSS] Connection error:', err.message);
                 this.emit('error', err);
+                if (this.ws !== ws || connectEpoch !== this.socketEpoch)
+                    return;
                 // Reject the connect promise if the socket is still connecting.
-                if (this.ws.readyState === WebSocket.CONNECTING) {
-                    reject(err);
+                if (ws.readyState === WebSocket.CONNECTING) {
+                    finishReject(err);
                 }
             });
+        }).finally(() => {
+            if (this.connectPromise) {
+                this.connectPromise = null;
+            }
         });
+        return this.connectPromise;
     }
     /**
      * Disconnect manually.
      */
     async disconnect() {
         this.isManualDisconnect = true;
+        this._clearReconnectTimer();
         this.stopHeartbeat();
         if (this.ws) {
             this.ws.close(1000, 'Manual disconnect');
@@ -106,17 +155,31 @@ class WSSClient extends EventEmitter {
      * Schedule reconnect with exponential backoff and jitter.
      */
     scheduleReconnect() {
+        if (this.isManualDisconnect)
+            return;
+        if (this.reconnectTimer)
+            return;
+        if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
         // Exponential backoff + jitter to avoid reconnect storms.
         const jitter = Math.random() * 1000;
         const delay = Math.min(this.reconnectDelay + jitter, this.maxReconnectDelay);
         console.log(`[WSS] Reconnecting in ${Math.round(delay / 1000)}s...`);
-        setTimeout(() => {
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
             this.connect().catch((err) => {
                 console.error('[WSS] Reconnect failed:', err.message);
             });
         }, delay);
         // Exponential growth: 1s -> 2s -> 4s -> 8s -> ... -> 60s
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
+    }
+    _clearReconnectTimer() {
+        if (!this.reconnectTimer)
+            return;
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
     }
     /**
      * Send the HELLO message with device/runtime metadata.
