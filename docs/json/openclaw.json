@@ -55,7 +55,10 @@
         "id": "main",
         "tools": {
           "allow": [
-            "xiotbox_local_control","xiotbox_control"
+            "xiotbox_local_control",
+            "xiotbox_control",
+            "web_search",
+            "web_fetch"
           ]
         }
       }
@@ -81,6 +84,17 @@
         "session-memory": {
           "enabled": true
         }
+      }
+    }
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "enabled": true,
+        "provider": "brave"
+      },
+      "fetch": {
+        "enabled": true
       }
     }
   },
@@ -123,6 +137,9 @@
     }
   },
   "plugins": {
+    "allow": [
+      "xiotbox"
+    ],
     "entries": {
       "xiotbox": {
         "enabled": true

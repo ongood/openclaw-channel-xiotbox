@@ -115,15 +115,15 @@ apt-get install -y make g++
 Direct Git install:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#2.0.21
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#2.0.23
 ```
 
 Or use the maintained helper script:
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 2.0.21
+bash scripts/update_openclaw_xiotbox.sh 2.0.23
 # or
-bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#2.0.21
+bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#2.0.23
 ```
 
 On Linux/systemd hosts, restart the gateway service after install/update:
@@ -159,6 +159,47 @@ print('plugins.installs.xiotbox:', 'xiotbox' in ((d.get('plugins') or {}).get('i
 print('channels.xiotbox:', 'xiotbox' in (d.get('channels') or {}))
 PY
 ```
+
+## 6.1 Recommended OpenClaw config hygiene
+
+For XiotBox-only local plugin trust, keep `plugins.allow` explicit and minimal:
+
+```json
+{
+  "plugins": {
+    "allow": ["xiotbox"],
+    "entries": {
+      "xiotbox": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+Do not keep stale ids such as `openai`, `brave`, or `memory-core` in `plugins.allow`
+unless those plugins are actually installed.
+
+If XiotBox chat should be able to use web search/fetch, the agent allowlist must also
+permit those tools. A common working example is:
+
+```json
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": ["xiotbox_control", "web_search", "web_fetch"]
+        }
+      }
+    ]
+  }
+}
+```
+
+If you want the `main` agent to inherit the global tool policy instead, remove
+`agents.list[].tools.allow` entirely.
 
 ## 7. Local-control note
 

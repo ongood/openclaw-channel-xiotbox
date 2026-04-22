@@ -101,6 +101,24 @@ Minimal plugin-mode example in `openclaw.json`:
 
 ```json
 {
+  "plugins": {
+    "allow": ["xiotbox"],
+    "entries": {
+      "xiotbox": {
+        "enabled": true
+      }
+    }
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": ["xiotbox_control", "web_search", "web_fetch"]
+        }
+      }
+    ]
+  },
   "channels": {
     "xiotbox": {
       "enabled": true,
@@ -114,6 +132,13 @@ Minimal plugin-mode example in `openclaw.json`:
 ```
 
 This is enough for the remote XiotBox channel path in the common case.
+
+Recommended notes:
+
+- Keep `plugins.allow` explicit and minimal. If only `xiotbox` is installed locally, prefer `["xiotbox"]`.
+- Do not leave stale ids such as `openai`, `brave`, or `memory-core` in `plugins.allow` unless those plugins are actually installed.
+- `tools.web.search` can be enabled globally and still remain unavailable in XiotBox chat if `agents.list[].tools.allow` only includes `xiotbox_control`.
+- If XiotBox chat should be able to search/fetch the web, include `web_search` and `web_fetch` in the `main` agent allowlist, or remove that allowlist entirely so the agent inherits the global tool policy.
 
 ### Bridge mode
 
