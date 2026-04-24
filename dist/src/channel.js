@@ -144,6 +144,14 @@ function resolveHomeDir() {
     }
     return path.resolve(explicit);
 }
+function resolveAgentId(cfg) {
+    const channelCfg = getChannelConfig(cfg);
+    const configured = normalizeStringValue(channelCfg.SESSION_AGENT_ID) ||
+        normalizeStringValue(channelCfg.AGENT_ID) ||
+        normalizeStringValue(cfg?.agents?.defaults?.id) ||
+        DEFAULT_AGENT_ID;
+    return configured;
+}
 function expandUserPath(rawPath, homeDir) {
     const normalized = String(rawPath || '').trim();
     if (!normalized)
@@ -157,10 +165,11 @@ function expandUserPath(rawPath, homeDir) {
 }
 function resolveSessionStorePath(cfg) {
     const homeDir = resolveHomeDir();
+    const agentId = resolveAgentId(cfg);
     const rawStore = String(cfg?.session?.store || '').trim();
     if (rawStore) {
         const withAgent = rawStore.includes('{agentId}')
-            ? rawStore.split('{agentId}').join(DEFAULT_AGENT_ID)
+            ? rawStore.split('{agentId}').join(agentId)
             : rawStore;
         return path.resolve(expandUserPath(withAgent, homeDir));
     }
@@ -168,7 +177,7 @@ function resolveSessionStorePath(cfg) {
     const stateDir = stateOverride
         ? path.resolve(expandUserPath(stateOverride, homeDir))
         : path.resolve(path.join(homeDir, '.openclaw'));
-    return path.resolve(stateDir, 'agents', DEFAULT_AGENT_ID, 'sessions', 'sessions.json');
+    return path.resolve(stateDir, 'agents', agentId, 'sessions', 'sessions.json');
 }
 function loadSessionStore(storePath) {
     try {

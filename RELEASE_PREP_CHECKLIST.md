@@ -47,7 +47,7 @@ This checklist is for preparing the XiotBox plugin repository for a future publi
 - Confirm `openclaw.install.localPath` remains correct.
 - Confirm `openclaw.install.minHostVersion` remains `>=2026.3.22` and matches tested host versions.
 - Confirm `dist/` artifacts are up to date if release packaging depends on them.
-- Confirm the release stays on the `2.0.15` version line and is published via a new tag.
+- Confirm the release stays on the current `2.0.x` version line and is published via a new tag.
 - Run:
 
 ```bash

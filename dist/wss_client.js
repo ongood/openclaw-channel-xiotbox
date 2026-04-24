@@ -273,6 +273,11 @@ class WSSClient extends EventEmitter {
     handleMessage(msg) {
         const { type, payload } = msg;
         switch (type) {
+            case 'HELLO_ACK':
+                // Server-side capability / handshake acknowledgements are optional today,
+                // but keeping them explicit lets future gateway negotiation evolve quietly.
+                this.emit('HELLO_ACK', payload);
+                break;
             case 'HEARTBEAT_ACK':
                 // Heartbeat response: ignore silently.
                 break;

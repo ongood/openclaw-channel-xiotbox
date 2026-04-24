@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Configuration files (may contain sensitive credentials)
 config.json
@@ -19,4 +18,3 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
-dist/package.json

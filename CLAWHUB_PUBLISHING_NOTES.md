@@ -31,7 +31,7 @@ This repository is now closer to ClawHub publication readiness, but this documen
 - Keep `README.md` engineering-heavy, but retain a stronger public-facing summary at the top.
 - Confirm the minimum tested OpenClaw host version.
 - Confirm whether a changelog file should be added before first public release.
-- Keep the publish strategy on the `2.0.15` line and release via a new tag.
+- Keep the publish strategy on the current `2.0.x` line and release via a new tag.
 
 ## Important compatibility note
 

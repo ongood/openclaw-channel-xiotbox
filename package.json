@@ -1,6 +1,6 @@
 {
   "name": "xiotbox",
-  "version": "2.0.20",
+  "version": "2.0.25",
   "description": "OpenClaw XiotBox channel plugin with remote chat delivery, optional device-control tools, and bridge-mode support.",
   "type": "module",
   "main": "dist/index.js",
@@ -31,6 +31,7 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "prepack": "npm run build",
+    "release:check": "node scripts/release_check.mjs",
     "check:env": "node scripts/check_no_env_outside_runtime_config.mjs",
     "test": "node --test test/*.test.mjs"
   },

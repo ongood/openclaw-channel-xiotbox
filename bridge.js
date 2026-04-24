@@ -6,9 +6,41 @@
  */
 
 import WebSocket from 'ws';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import WSSClient from './wss_client.js';
-import { OpenClawE2E } from './dist/src/e2e.js';
-import { loadRuntimeConfig } from './dist/src/runtime_config.js';
+
+function assertFreshDist() {
+  const root = path.dirname(fileURLToPath(import.meta.url));
+  const pairs = [
+    ['src/e2e.ts', 'dist/src/e2e.js'],
+    ['src/runtime_config.ts', 'dist/src/runtime_config.js'],
+  ];
+  const stale = [];
+
+  for (const [srcRel, distRel] of pairs) {
+    const srcPath = path.join(root, srcRel);
+    const distPath = path.join(root, distRel);
+    if (!fs.existsSync(distPath)) {
+      stale.push(`${distRel} is missing`);
+      continue;
+    }
+    const srcStat = fs.statSync(srcPath);
+    const distStat = fs.statSync(distPath);
+    if (srcStat.mtimeMs - distStat.mtimeMs > 1000) {
+      stale.push(`${distRel} is older than ${srcRel}`);
+    }
+  }
+
+  if (stale.length) {
+    throw new Error(`[Bridge] stale dist artifacts detected; run "npm run build" before starting bridge mode: ${stale.join('; ')}`);
+  }
+}
+
+assertFreshDist();
+const { OpenClawE2E } = await import('./dist/src/e2e.js');
+const { loadRuntimeConfig } = await import('./dist/src/runtime_config.js');
 
 const runtimeConfig = loadRuntimeConfig();
 const { bridge, xiotbox } = runtimeConfig;
@@ -17,6 +49,17 @@ const GATEWAY_PORT = bridge.openclawPort;
 const GATEWAY_HOST = bridge.openclawHost;
 const GATEWAY_TOKEN = bridge.GATEWAY_TOKEN;
 const AGENT_ID = bridge.agentId;
+const HANDSHAKE = {
+  minProtocol: bridge.minProtocol,
+  maxProtocol: bridge.maxProtocol,
+  clientId: bridge.clientId,
+  clientVersion: bridge.clientVersion,
+  clientPlatform: bridge.clientPlatform,
+  clientMode: bridge.clientMode,
+  role: bridge.role,
+  scopes: Array.isArray(bridge.scopes) && bridge.scopes.length ? bridge.scopes : ['operator.read', 'operator.write'],
+  userAgent: bridge.userAgent,
+};
 
 const XIOTBOX_CONFIG = {
   GATEWAY_WSS_URL: xiotbox.GATEWAY_WSS_URL,
@@ -214,13 +257,18 @@ function handleGatewayMessage(msg) {
         id: 'connect',
         method: 'connect',
         params: {
-          minProtocol: 3,
-          maxProtocol: 3,
-          client: { id: 'xiotbox-bridge', version: '1.0.0', platform: 'bridge', mode: 'backend' },
-          role: 'operator',
-          scopes: ['operator.read', 'operator.write'],
+          minProtocol: HANDSHAKE.minProtocol,
+          maxProtocol: HANDSHAKE.maxProtocol,
+          client: {
+            id: HANDSHAKE.clientId,
+            version: HANDSHAKE.clientVersion,
+            platform: HANDSHAKE.clientPlatform,
+            mode: HANDSHAKE.clientMode,
+          },
+          role: HANDSHAKE.role,
+          scopes: HANDSHAKE.scopes,
           auth: { token: GATEWAY_TOKEN },
-          userAgent: 'xiotbox-bridge',
+          userAgent: HANDSHAKE.userAgent,
         },
       }),
     );

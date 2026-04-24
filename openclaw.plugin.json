@@ -2,7 +2,7 @@
   "id": "xiotbox",
   "name": "XiotBox OpenClaw Channel",
   "description": "XiotBox channel plugin for OpenClaw with remote chat delivery, optional device-control tools, and bridge-mode support.",
-  "version": "2.0.20",
+  "version": "2.0.25",
   "channels": [
     "xiotbox"
   ],
@@ -116,6 +116,14 @@
         ],
         "description": "Optional allowlist of local control actions exposed by the plugin tools."
       },
+      "AGENT_ID": {
+        "type": "string",
+        "description": "OpenClaw agent id used when resolving session metadata. Defaults to main."
+      },
+      "SESSION_AGENT_ID": {
+        "type": "string",
+        "description": "Optional session metadata agent id override. Takes precedence over AGENT_ID."
+      },
       "LOCAL_CONTROL_BASE_URL": {
         "type": "string",
         "description": "Base URL of the XiotBox local-control service used by optional control tools."
@@ -203,6 +211,14 @@
     },
     "CONTROL_ACTIONS": {
       "label": "Allowed Control Actions"
+    },
+    "AGENT_ID": {
+      "label": "Agent ID",
+      "placeholder": "main"
+    },
+    "SESSION_AGENT_ID": {
+      "label": "Session Agent ID",
+      "placeholder": "main"
     },
     "LOCAL_CONTROL_BASE_URL": {
       "label": "Local Control Base URL",

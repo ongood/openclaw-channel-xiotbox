@@ -37,6 +37,8 @@ Files to verify:
 Update the release version consistently in:
 
 - `package.json` -> `version`
+- `package-lock.json` -> `version` and `packages[""].version`
+- `openclaw.plugin.json` -> `version`
 - `scripts/update_openclaw_xiotbox.sh` default `TAG`
 - `scripts/install_configure_xiotbox.sh` default `TAG`
 - `scripts/test_install_xiotbox_termux.sh` default Git tag
@@ -48,6 +50,7 @@ Update the release version consistently in:
 ```bash
 npm install
 npm run build
+npm run release:check
 ```
 
 Verify these artifacts exist and are fresh:

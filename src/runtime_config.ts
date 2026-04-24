@@ -51,6 +51,15 @@ type BridgeConfigFile = {
    * Target agent id on the OpenClaw gateway (operator client).
    */
   agentId: string;
+  minProtocol: number;
+  maxProtocol: number;
+  clientId: string;
+  clientVersion: string;
+  clientPlatform: string;
+  clientMode: string;
+  role: string;
+  scopes: string[];
+  userAgent: string;
 };
 
 type XiotboxSecretsFile = {
@@ -93,6 +102,22 @@ function truthyEnv(value: Maybe<string>): boolean {
   const v = String(value ?? '').trim().toLowerCase();
   if (!v) return false;
   return ['1', 'true', 'yes', 'on'].includes(v);
+}
+
+function intEnv(value: Maybe<string>, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.floor(parsed);
+}
+
+function strListEnv(value: Maybe<string>, fallback: string[]): string[] {
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  const parts = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length ? parts : fallback;
 }
 
 function getOpenclawHome(): string {
@@ -158,6 +183,15 @@ function defaultConfig(): ConfigFileShape {
       openclawHost: '127.0.0.1',
       openclawPort: 18789,
       agentId: 'main',
+      minProtocol: 3,
+      maxProtocol: 3,
+      clientId: 'xiotbox-bridge',
+      clientVersion: '1.0.0',
+      clientPlatform: 'bridge',
+      clientMode: 'backend',
+      role: 'operator',
+      scopes: ['operator.read', 'operator.write'],
+      userAgent: 'xiotbox-bridge',
     },
   };
 }
@@ -292,6 +326,26 @@ export function loadRuntimeConfig(): RuntimeConfig {
       cfg.bridge.endpoint = nextEndpoint;
       mutatedConfig = true;
     }
+  }
+  if (typeof process.env.XIOTBOX_BRIDGE_MIN_PROTOCOL === 'string') {
+    cfg.bridge.minProtocol = intEnv(process.env.XIOTBOX_BRIDGE_MIN_PROTOCOL, cfg.bridge.minProtocol);
+    mutatedConfig = true;
+  }
+  if (typeof process.env.XIOTBOX_BRIDGE_MAX_PROTOCOL === 'string') {
+    cfg.bridge.maxProtocol = intEnv(process.env.XIOTBOX_BRIDGE_MAX_PROTOCOL, cfg.bridge.maxProtocol);
+    mutatedConfig = true;
+  }
+  if (typeof process.env.XIOTBOX_BRIDGE_CLIENT_VERSION === 'string') {
+    cfg.bridge.clientVersion = String(process.env.XIOTBOX_BRIDGE_CLIENT_VERSION || '').trim() || cfg.bridge.clientVersion;
+    mutatedConfig = true;
+  }
+  if (typeof process.env.XIOTBOX_BRIDGE_ROLE === 'string') {
+    cfg.bridge.role = String(process.env.XIOTBOX_BRIDGE_ROLE || '').trim() || cfg.bridge.role;
+    mutatedConfig = true;
+  }
+  if (typeof process.env.XIOTBOX_BRIDGE_SCOPES === 'string') {
+    cfg.bridge.scopes = strListEnv(process.env.XIOTBOX_BRIDGE_SCOPES, cfg.bridge.scopes);
+    mutatedConfig = true;
   }
 
   if (!fs.existsSync(configPath) || mutatedConfig) {
