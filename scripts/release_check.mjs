@@ -20,15 +20,12 @@ function fail(message) {
 const pkg = readJson('package.json');
 const lock = readJson('package-lock.json');
 const manifest = readJson('openclaw.plugin.json');
-const distPkgPath = path.join(root, 'dist', 'package.json');
-const distPkg = fs.existsSync(distPkgPath) ? readJson('dist/package.json') : null;
 const version = pkg.version;
 
 const versionChecks = [
   ['package-lock.json', lock.version],
   ['package-lock.json packages[""].version', lock.packages?.['']?.version],
   ['openclaw.plugin.json', manifest.version],
-  ['dist/package.json', distPkg?.version],
 ];
 
 for (const [label, value] of versionChecks) {

@@ -2,13 +2,22 @@ import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import os from 'os';
 import { createRequire } from 'module';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const require = createRequire(import.meta.url);
-let pkg;
-try {
-    pkg = require('./package.json');
-} catch (err) {
-    pkg = require('../package.json');
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const packageCandidates = path.basename(moduleDir) === 'dist'
+    ? [path.join(moduleDir, '..', 'package.json'), path.join(moduleDir, 'package.json')]
+    : [path.join(moduleDir, 'package.json'), path.join(moduleDir, '..', 'package.json')];
+let pkg = { version: '0.0.0' };
+for (const candidate of packageCandidates) {
+    try {
+        pkg = require(candidate);
+        break;
+    } catch (err) {
+        // Try the next package metadata location.
+    }
 }
 
 /**
