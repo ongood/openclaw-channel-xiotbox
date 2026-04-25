@@ -27,8 +27,18 @@ function normalizeContextEpoch(value) {
   return epoch > 0 ? epoch : 0;
 }
 
-function buildSessionKey(deviceId, threadId, contextEpoch = 0) {
-  const base = `xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
+function normalizeAgentId(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const safe = normalized
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+$/, '')
+    .slice(0, 64);
+  return safe || 'main';
+}
+
+function buildSessionKey(agentId, deviceId, threadId, contextEpoch = 0) {
+  const base = `agent:${normalizeAgentId(agentId)}:xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
   return contextEpoch > 0 ? `${base}:ctx${contextEpoch}` : base;
 }
 
@@ -99,14 +109,17 @@ test('normalizeContextEpoch handles various inputs', () => {
 });
 
 test('buildSessionKey without contextEpoch', () => {
-  assert.equal(buildSessionKey('dev1', 'thread1'), 'xiotbox:dev1:thread1');
-  assert.equal(buildSessionKey('dev1', ''), 'xiotbox:dev1:default');
-  assert.equal(buildSessionKey('dev1', null), 'xiotbox:dev1:default');
+  assert.equal(buildSessionKey('main', 'dev1', 'thread1'), 'agent:main:xiotbox:dev1:thread1');
+  assert.equal(buildSessionKey('builder', 'dev1', ''), 'agent:builder:xiotbox:dev1:default');
+  assert.equal(buildSessionKey('', 'dev1', null), 'agent:main:xiotbox:dev1:default');
 });
 
 test('buildSessionKey with contextEpoch', () => {
-  assert.equal(buildSessionKey('dev1', 'thread1', 3), 'xiotbox:dev1:thread1:ctx3');
-  assert.equal(buildSessionKey('dev1', 'thread1', 0), 'xiotbox:dev1:thread1');
+  assert.equal(
+    buildSessionKey('builder', 'dev1', 'thread1', 3),
+    'agent:builder:xiotbox:dev1:thread1:ctx3',
+  );
+  assert.equal(buildSessionKey('builder', 'dev1', 'thread1', 0), 'agent:builder:xiotbox:dev1:thread1');
 });
 
 test('normalizeStrList from array', () => {

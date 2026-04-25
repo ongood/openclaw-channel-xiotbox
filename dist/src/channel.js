@@ -49,8 +49,17 @@ function normalizeContextEpoch(value) {
     const epoch = Math.floor(parsed);
     return epoch > 0 ? epoch : 0;
 }
-function buildSessionKey(deviceId, threadId, contextEpoch = 0) {
-    const base = `xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
+function normalizeAgentId(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    const safe = normalized
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+/, '')
+        .replace(/-+$/, '')
+        .slice(0, 64);
+    return safe || DEFAULT_AGENT_ID;
+}
+function buildSessionKey(agentId, deviceId, threadId, contextEpoch = 0) {
+    const base = `agent:${normalizeAgentId(agentId)}:xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
     return contextEpoch > 0 ? `${base}:ctx${contextEpoch}` : base;
 }
 function hasOwn(obj, key) {
@@ -150,7 +159,32 @@ function resolveAgentId(cfg) {
         normalizeStringValue(channelCfg.AGENT_ID) ||
         normalizeStringValue(cfg?.agents?.defaults?.id) ||
         DEFAULT_AGENT_ID;
-    return configured;
+    return normalizeAgentId(configured);
+}
+function readThreadAgentMapValue(map, threadId) {
+    if (!map || typeof map !== 'object' || Array.isArray(map))
+        return '';
+    const normalizedThreadId = normalizeThreadId(threadId);
+    const candidates = [
+        normalizedThreadId,
+        normalizedThreadId.toLowerCase(),
+        threadId,
+        '*',
+        'default',
+    ];
+    for (const key of candidates) {
+        const value = normalizeStringValue(map[key]);
+        if (value)
+            return value;
+    }
+    return '';
+}
+function resolveThreadAgentId(cfg, threadId) {
+    const channelCfg = getChannelConfig(cfg);
+    const mapped = readThreadAgentMapValue(channelCfg.SESSION_AGENT_MAP, threadId) ||
+        readThreadAgentMapValue(channelCfg.THREAD_AGENT_MAP, threadId) ||
+        '';
+    return normalizeAgentId(mapped || resolveAgentId(cfg));
 }
 function expandUserPath(rawPath, homeDir) {
     const normalized = String(rawPath || '').trim();
@@ -163,9 +197,14 @@ function expandUserPath(rawPath, homeDir) {
     }
     return normalized;
 }
-function resolveSessionStorePath(cfg) {
+function resolveAgentIdFromSessionKey(sessionKey) {
+    const raw = String(sessionKey || '').trim();
+    const match = /^agent:([^:]+):/i.exec(raw);
+    return match?.[1] ? normalizeAgentId(match[1]) : '';
+}
+function resolveSessionStorePath(cfg, sessionKey) {
     const homeDir = resolveHomeDir();
-    const agentId = resolveAgentId(cfg);
+    const agentId = resolveAgentIdFromSessionKey(sessionKey) || resolveAgentId(cfg);
     const rawStore = String(cfg?.session?.store || '').trim();
     if (rawStore) {
         const withAgent = rawStore.includes('{agentId}')
@@ -211,7 +250,7 @@ function resolveSessionUsageSnapshot(cfg, sessionKey) {
     const normalizedSessionKey = String(sessionKey || '').trim();
     if (!normalizedSessionKey)
         return null;
-    const storePath = resolveSessionStorePath(cfg);
+    const storePath = resolveSessionStorePath(cfg, sessionKey);
     const store = loadSessionStore(storePath);
     const entry = store[normalizedSessionKey] ||
         store[normalizedSessionKey.toLowerCase()] ||
@@ -1673,17 +1712,19 @@ export const xiotboxPlugin = {
                         }
                         return result;
                     };
-                    const sessionKey = buildSessionKey(finalCfg.DEVICE_ID, threadId, contextEpoch);
                     const senderId = payload?.from || 'xiotbox';
+                    const fullConfig = runtime?.config?.loadConfig?.() ?? cfg;
+                    const agentId = resolveThreadAgentId(fullConfig, threadId);
+                    const sessionKey = buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
                     const counterKey = toolOnlyCounterKey(finalCfg.DEVICE_ID, threadId, senderId);
                     const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID, threadId);
-                    const fullConfig = runtime?.config?.loadConfig?.() ?? cfg;
                     log?.debug?.(JSON.stringify({
                         event: 'session_scope',
                         trace_id: traceId || '',
                         message_id: cmdId,
                         device_id: finalCfg.DEVICE_ID,
                         thread_id: threadId,
+                        agent_id: agentId,
                         context_epoch: contextEpoch,
                         context_epoch_source: contextEpochResolution.source,
                         session_key: sessionKey,

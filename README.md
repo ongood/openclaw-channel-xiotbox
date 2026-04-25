@@ -147,6 +147,10 @@ OpenClaw 2026.4+ applies stricter tool filtering. XiotBox does not create the co
 message provider, owner authorization, global policy, agent policy, provider policy,
 group policy, and the effective exec approval policy.
 
+For the full role/permission matrix, recommended OpenClaw agent split, and
+XiotBox control-action baseline, see
+[`docs/digital-employee-permissions.md`](docs/digital-employee-permissions.md).
+
 If `agents.list[].tools.allow` is present, it becomes a restrictive allowlist. A
 minimal XiotBox-only list such as `["xiotbox_control", "web_search", "web_fetch"]`
 will intentionally remove `exec`, `process`, `read`, `write`, and `edit` from the
