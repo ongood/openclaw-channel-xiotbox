@@ -140,6 +140,74 @@ Recommended notes:
 - `tools.web.search` can be enabled globally and still remain unavailable in XiotBox chat if `agents.list[].tools.allow` only includes `xiotbox_control`.
 - If XiotBox chat should be able to search/fetch the web, include `web_search` and `web_fetch` in the `main` agent allowlist, or remove that allowlist entirely so the agent inherits the global tool policy.
 
+### Digital employee tool policy
+
+OpenClaw 2026.4+ applies stricter tool filtering. XiotBox does not create the core
+`exec` tool itself; OpenClaw creates core tools first and then filters them through
+message provider, owner authorization, global policy, agent policy, provider policy,
+group policy, and the effective exec approval policy.
+
+If `agents.list[].tools.allow` is present, it becomes a restrictive allowlist. A
+minimal XiotBox-only list such as `["xiotbox_control", "web_search", "web_fetch"]`
+will intentionally remove `exec`, `process`, `read`, `write`, and `edit` from the
+chat. For an AI digital employee that should inspect files and operate the host,
+use an explicit trusted allowlist and an explicit `tools.exec` policy:
+
+```json
+{
+  "tools": {
+    "web": {
+      "search": {
+        "enabled": true,
+        "provider": "brave"
+      },
+      "fetch": {
+        "enabled": true
+      }
+    },
+    "exec": {
+      "host": "auto",
+      "security": "allowlist",
+      "ask": "on-miss",
+      "applyPatch": {
+        "workspaceOnly": true
+      }
+    }
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": [
+            "read",
+            "write",
+            "edit",
+            "exec",
+            "process",
+            "web_search",
+            "web_fetch",
+            "xiotbox_control"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+For a fully trusted private deployment you can temporarily test with
+`openclaw exec-policy set --host auto --security full --ask off`, but the safer
+production baseline is `security=allowlist` with `ask=on-miss`.
+
+Useful checks on the OpenClaw host:
+
+```bash
+openclaw exec-policy show
+openclaw approvals get --gateway
+openclaw status
+```
+
 ### Bridge mode
 
 Bridge mode uses files under `$OPENCLAW_HOME/xiotbox/`:

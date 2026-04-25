@@ -115,15 +115,15 @@ apt-get install -y make g++
 Direct Git install:
 
 ```bash
-openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#2.0.26
+openclaw plugins install https://github.com/ongood/openclaw-channel-xiotbox.git#2.0.27
 ```
 
 Or use the maintained helper script:
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 2.0.26
+bash scripts/update_openclaw_xiotbox.sh 2.0.27
 # or
-bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#2.0.26
+bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#2.0.27
 ```
 
 On Linux/systemd hosts, restart the gateway service after install/update:
@@ -181,7 +181,7 @@ Do not keep stale ids such as `openai`, `brave`, or `memory-core` in `plugins.al
 unless those plugins are actually installed.
 
 If XiotBox chat should be able to use web search/fetch, the agent allowlist must also
-permit those tools. A common working example is:
+permit those tools. A minimal chat/search working example is:
 
 ```json
 {
@@ -200,6 +200,62 @@ permit those tools. A common working example is:
 
 If you want the `main` agent to inherit the global tool policy instead, remove
 `agents.list[].tools.allow` entirely.
+
+For a trusted "AI digital employee" deployment, OpenClaw 2026.4+ also needs the
+core operating tools in the agent allowlist. The XiotBox plugin does not create
+`exec`; OpenClaw creates it and then filters it through global/agent/provider
+tool policies and the effective exec approval policy. If the allowlist only has
+`xiotbox_control`, `web_search`, and `web_fetch`, then `exec` is correctly hidden.
+
+Recommended controlled baseline:
+
+```json
+{
+  "tools": {
+    "exec": {
+      "host": "auto",
+      "security": "allowlist",
+      "ask": "on-miss",
+      "applyPatch": {
+        "workspaceOnly": true
+      }
+    }
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "tools": {
+          "allow": [
+            "read",
+            "write",
+            "edit",
+            "exec",
+            "process",
+            "web_search",
+            "web_fetch",
+            "xiotbox_control"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+Debug commands:
+
+```bash
+openclaw exec-policy show
+openclaw approvals get --gateway
+openclaw status
+```
+
+For a short trusted-lab test only, you can use:
+
+```bash
+openclaw exec-policy set --host auto --security full --ask off
+```
 
 ## 7. Local-control note
 

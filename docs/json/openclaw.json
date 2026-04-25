@@ -55,6 +55,11 @@
         "id": "main",
         "tools": {
           "allow": [
+            "read",
+            "write",
+            "edit",
+            "exec",
+            "process",
             "xiotbox_local_control",
             "xiotbox_control",
             "web_search",
@@ -88,6 +93,14 @@
     }
   },
   "tools": {
+    "exec": {
+      "host": "auto",
+      "security": "allowlist",
+      "ask": "on-miss",
+      "applyPatch": {
+        "workspaceOnly": true
+      }
+    },
     "web": {
       "search": {
         "enabled": true,
