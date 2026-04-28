@@ -34,6 +34,29 @@ for (const [label, value] of versionChecks) {
   }
 }
 
+const declaredChannels = Array.isArray(manifest.channels) ? manifest.channels : [];
+for (const channelId of declaredChannels) {
+  const channelConfig = manifest.channelConfigs?.[channelId];
+  if (!channelConfig || typeof channelConfig !== 'object') {
+    fail(`openclaw.plugin.json channelConfigs.${channelId} is missing`);
+    continue;
+  }
+  if (!channelConfig.schema || typeof channelConfig.schema !== 'object') {
+    fail(`openclaw.plugin.json channelConfigs.${channelId}.schema is missing`);
+  }
+  if (!channelConfig.uiHints || typeof channelConfig.uiHints !== 'object') {
+    fail(`openclaw.plugin.json channelConfigs.${channelId}.uiHints is missing`);
+  }
+}
+
+const xiotboxChannelSchema = manifest.channelConfigs?.xiotbox?.schema;
+const xiotboxChannelProperties = xiotboxChannelSchema?.properties || {};
+for (const requiredKey of ['GATEWAY_WSS_URL', 'DEVICE_ID', 'DEVICE_TOKEN']) {
+  if (!xiotboxChannelProperties[requiredKey]) {
+    fail(`openclaw.plugin.json channelConfigs.xiotbox.schema.properties.${requiredKey} is missing`);
+  }
+}
+
 const releaseRefs = [
   'scripts/update_openclaw_xiotbox.sh',
   'scripts/install_configure_xiotbox.sh',
