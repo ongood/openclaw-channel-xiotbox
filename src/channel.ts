@@ -140,6 +140,13 @@ async function stopActiveGatewayAccount(accountId: string, reason: string): Prom
   }
 }
 
+function clearConnectedAtForInstance(accountId: string, instanceId: number): void {
+  const current = activeGatewayAccounts.get(accountId);
+  if (current?.instanceId === instanceId) {
+    current.connectedAt = undefined;
+  }
+}
+
 function normalizeAccountId(value?: string | null): string {
   const normalized = String(value || '').trim();
   return normalized || DEFAULT_ACCOUNT_ID;
@@ -2711,10 +2718,7 @@ export const xiotboxPlugin = {
 
       client.on('disconnected', () => {
         log?.warn?.(`[XiotBox][${accountId}] Disconnected from Gateway`);
-        const current = activeGatewayAccounts.get(accountId);
-        if (current?.instanceId === instanceId) {
-          current.connectedAt = undefined;
-        }
+        clearConnectedAtForInstance(accountId, instanceId);
         updateGatewayStatus(ctx, accountId, {
           running: true,
           connected: false,
@@ -2726,6 +2730,7 @@ export const xiotboxPlugin = {
 
       client.on('error', (err: any) => {
         log?.error?.(`[XiotBox][${accountId}] Client error: ${err.message}`);
+        clearConnectedAtForInstance(accountId, instanceId);
         updateGatewayStatus(ctx, accountId, {
           running: true,
           connected: false,

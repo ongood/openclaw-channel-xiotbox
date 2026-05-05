@@ -17,15 +17,15 @@ Usage:
 
 Examples:
   bash scripts/install_configure_xiotbox.sh \
-  wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN> https://api.xiotbox.com 3.0.1 1
+  wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN> https://api.xiotbox.com 3.0.2 1
 
   bash scripts/install_configure_xiotbox.sh \
     wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN> - \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#3.0.1 0
+  https://github.com/ongood/openclaw-channel-xiotbox.git#3.0.2 0
 
 Notes:
   - API_BASE_URL: pass '-' to keep existing config value (or leave empty).
-- TAG_OR_REPO: can be '3.0.1' or full git URL.
+- TAG_OR_REPO: can be '3.0.2' or full git URL.
 MSG
 }
 
@@ -38,7 +38,7 @@ GATEWAY_WSS_URL="${1:-}"
 DEVICE_ID="${2:-}"
 DEVICE_TOKEN="${3:-}"
 API_BASE_URL="${4:-https://api.xiotbox.com}"
-TAG_OR_REPO="${5:-3.0.1}"
+TAG_OR_REPO="${5:-3.0.2}"
 ALLOW_NEW_CLIENT_IDENTITIES="${6:-1}"
 
 if [ -z "$GATEWAY_WSS_URL" ] || [ -z "$DEVICE_ID" ] || [ -z "$DEVICE_TOKEN" ]; then
