@@ -8,3 +8,6 @@ export function getXiotboxRuntime() {
     }
     return runtime;
 }
+export function getXiotboxRuntimeOrNull() {
+    return runtime;
+}
