@@ -33,6 +33,7 @@
     "prepack": "npm run build",
     "release:check": "node scripts/release_check.mjs",
     "check:env": "node scripts/check_no_env_outside_runtime_config.mjs",
+    "spike:entry": "node scripts/spike_openclaw_entry_3_1.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
