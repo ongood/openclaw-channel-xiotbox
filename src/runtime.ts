@@ -1,9 +1,17 @@
+export type RuntimeReplySurface = {
+  dispatchReplyWithBufferedBlockDispatcher?: (args: Record<string, unknown>) => Promise<any>;
+  createReplyDispatcherWithTyping?: (args: Record<string, unknown>) => any;
+  finalizeInboundContext?: (ctx: unknown) => any;
+  dispatchReplyFromConfig?: (args: Record<string, unknown>) => Promise<any>;
+  [key: string]: unknown;
+};
+
 export type PluginRuntime = {
   config?: {
     loadConfig?: () => unknown;
   };
   channel?: {
-    reply?: Record<string, any>;
+    reply?: RuntimeReplySurface;
   };
 };
 

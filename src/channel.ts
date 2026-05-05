@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import WSSClient from '../wss_client.js';
 import { getXiotboxRuntimeOrNull } from './runtime.js';
+import type { RuntimeReplySurface } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
 
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -63,6 +64,28 @@ type ProgressSnapshot = {
 
 type StreamEvent = Record<string, any>;
 
+type GatewayLogSink = {
+  debug?: (message: string) => void;
+  info?: (message: string) => void;
+  warn?: (message: string) => void;
+  error?: (message: string) => void;
+};
+
+type GatewayContextLike = {
+  accountId?: string | null;
+  cfg?: unknown;
+  channelRuntime?: {
+    reply?: RuntimeReplySurface;
+  } | null;
+  getStatus?: () => Record<string, unknown>;
+  setStatus?: (status: Record<string, unknown>) => void;
+};
+
+type GatewayStartContextLike = GatewayContextLike & {
+  log?: GatewayLogSink;
+  abortSignal?: AbortSignal;
+};
+
 type ActiveGatewayAccount = {
   instanceId: number;
   startedAt: number;
@@ -75,20 +98,25 @@ const contextEpochCache = new Map<string, ContextEpochCacheEntry>();
 const activeGatewayAccounts = new Map<string, ActiveGatewayAccount>();
 let gatewayInstanceSeq = 0;
 
-function getChannelRuntimeSurface(ctx: any): any {
+function getChannelRuntimeSurface(ctx: GatewayContextLike): GatewayContextLike['channelRuntime'] | null {
   return ctx?.channelRuntime || null;
 }
 
-function getReplyApi(ctx: any): any {
+function getReplyApi(ctx: GatewayContextLike): RuntimeReplySurface | null {
   const channelRuntime = getChannelRuntimeSurface(ctx);
   return channelRuntime?.reply || getXiotboxRuntimeOrNull()?.channel?.reply || null;
 }
 
-function loadCurrentConfig(ctx: any, fallbackCfg: any): any {
-  return getXiotboxRuntimeOrNull()?.config?.loadConfig?.() ?? ctx?.cfg ?? fallbackCfg;
+function resolveEffectiveConfig(ctx: GatewayContextLike, startupCfg: unknown): unknown {
+  return ctx?.cfg ?? getXiotboxRuntimeOrNull()?.config?.loadConfig?.() ?? startupCfg;
 }
 
-function updateGatewayStatus(ctx: any, accountId: string, patch: Record<string, any>): void {
+function updateGatewayStatus(
+  ctx: GatewayContextLike,
+  accountId: string,
+  patch: Record<string, unknown>,
+  log?: GatewayLogSink,
+): void {
   if (typeof ctx?.setStatus !== 'function') return;
   try {
     const current = typeof ctx.getStatus === 'function' ? ctx.getStatus() : {};
@@ -97,8 +125,9 @@ function updateGatewayStatus(ctx: any, accountId: string, patch: Record<string, 
       accountId,
       ...patch,
     });
-  } catch (_err) {
+  } catch (err) {
     // Status reporting must never break the channel connection path.
+    log?.warn?.(`[XiotBox][${accountId}] status update failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -1663,7 +1692,7 @@ export const xiotboxPlugin = {
     },
   },
   gateway: {
-    startAccount: async (ctx: any) => {
+    startAccount: async (ctx: GatewayStartContextLike) => {
       const { cfg, log, abortSignal } = ctx;
       const accountId = normalizeAccountId(ctx?.accountId);
       const instanceId = ++gatewayInstanceSeq;
@@ -1673,7 +1702,7 @@ export const xiotboxPlugin = {
         connected: false,
         lastStatusAt: Date.now(),
         detail: 'starting',
-      });
+      }, log);
       log?.info?.(
         `[XiotBox][${accountId}] remote streaming config ` +
           `(STREAMING=${finalCfg.STREAMING}, ` +
@@ -1728,7 +1757,7 @@ export const xiotboxPlugin = {
             lastDisconnectedAt: Date.now(),
             lastStatusAt: Date.now(),
             detail: reason,
-          });
+          }, log);
           log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
           await client.disconnect();
         })();
@@ -1751,7 +1780,7 @@ export const xiotboxPlugin = {
           lastStatusAt: Date.now(),
           detail: 'runtime_unavailable',
           error: err,
-        });
+        }, log);
         throw new Error(err);
       }
 
@@ -1982,7 +2011,7 @@ export const xiotboxPlugin = {
           };
 
           const senderId = payload?.from || 'xiotbox';
-          const fullConfig = loadCurrentConfig(ctx, cfg);
+          const fullConfig = resolveEffectiveConfig(ctx, cfg);
           const agentId = resolveThreadAgentId(fullConfig, threadId);
           const sessionKey = buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
           const counterKey = toolOnlyCounterKey(
@@ -2674,7 +2703,7 @@ export const xiotboxPlugin = {
           lastConnectedAt: Date.now(),
           lastStatusAt: Date.now(),
           detail: 'connected',
-        });
+        }, log);
         e2e.refreshPeerKey().catch((err: any) => {
           log?.warn?.(`[XiotBox][${accountId}] E2E peer key refresh failed: ${err?.message || err}`);
         });
@@ -2682,13 +2711,17 @@ export const xiotboxPlugin = {
 
       client.on('disconnected', () => {
         log?.warn?.(`[XiotBox][${accountId}] Disconnected from Gateway`);
+        const current = activeGatewayAccounts.get(accountId);
+        if (current?.instanceId === instanceId) {
+          current.connectedAt = undefined;
+        }
         updateGatewayStatus(ctx, accountId, {
           running: true,
           connected: false,
           lastDisconnectedAt: Date.now(),
           lastStatusAt: Date.now(),
           detail: 'disconnected',
-        });
+        }, log);
       });
 
       client.on('error', (err: any) => {
@@ -2699,7 +2732,7 @@ export const xiotboxPlugin = {
           lastStatusAt: Date.now(),
           detail: 'client_error',
           error: err?.message || String(err),
-        });
+        }, log);
       });
 
       client.on('auth_required', (payload: any) => {
@@ -2729,7 +2762,7 @@ export const xiotboxPlugin = {
           lastStatusAt: Date.now(),
           detail: 'connect_failed',
           error: err instanceof Error ? err.message : String(err),
-        });
+        }, log);
         throw err;
       }
 
@@ -2748,7 +2781,7 @@ export const xiotboxPlugin = {
       await waitForAbortSignal(abortSignal);
       await stopCurrent('abort_signal');
     },
-    stopAccount: async (ctx: any) => {
+    stopAccount: async (ctx: GatewayStartContextLike) => {
       const accountId = normalizeAccountId(ctx?.accountId);
       await stopActiveGatewayAccount(accountId, 'stop_account');
       updateGatewayStatus(ctx, accountId, {
@@ -2757,7 +2790,7 @@ export const xiotboxPlugin = {
         lastDisconnectedAt: Date.now(),
         lastStatusAt: Date.now(),
         detail: 'stop_account',
-      });
+      }, ctx?.log);
     },
   },
   status: {

@@ -27,10 +27,10 @@ function getReplyApi(ctx) {
     const channelRuntime = getChannelRuntimeSurface(ctx);
     return channelRuntime?.reply || getXiotboxRuntimeOrNull()?.channel?.reply || null;
 }
-function loadCurrentConfig(ctx, fallbackCfg) {
-    return getXiotboxRuntimeOrNull()?.config?.loadConfig?.() ?? ctx?.cfg ?? fallbackCfg;
+function resolveEffectiveConfig(ctx, startupCfg) {
+    return ctx?.cfg ?? getXiotboxRuntimeOrNull()?.config?.loadConfig?.() ?? startupCfg;
 }
-function updateGatewayStatus(ctx, accountId, patch) {
+function updateGatewayStatus(ctx, accountId, patch, log) {
     if (typeof ctx?.setStatus !== 'function')
         return;
     try {
@@ -41,8 +41,9 @@ function updateGatewayStatus(ctx, accountId, patch) {
             ...patch,
         });
     }
-    catch (_err) {
+    catch (err) {
         // Status reporting must never break the channel connection path.
+        log?.warn?.(`[XiotBox][${accountId}] status update failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
 async function stopActiveGatewayAccount(accountId, reason) {
@@ -1500,7 +1501,7 @@ export const xiotboxPlugin = {
                 connected: false,
                 lastStatusAt: Date.now(),
                 detail: 'starting',
-            });
+            }, log);
             log?.info?.(`[XiotBox][${accountId}] remote streaming config ` +
                 `(STREAMING=${finalCfg.STREAMING}, ` +
                 `BLOCK_STREAMING=${finalCfg.BLOCK_STREAMING}, ` +
@@ -1546,7 +1547,7 @@ export const xiotboxPlugin = {
                         lastDisconnectedAt: Date.now(),
                         lastStatusAt: Date.now(),
                         detail: reason,
-                    });
+                    }, log);
                     log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
                     await client.disconnect();
                 })();
@@ -1568,7 +1569,7 @@ export const xiotboxPlugin = {
                     lastStatusAt: Date.now(),
                     detail: 'runtime_unavailable',
                     error: err,
-                });
+                }, log);
                 throw new Error(err);
             }
             const commandCache = new Map();
@@ -1774,7 +1775,7 @@ export const xiotboxPlugin = {
                         return result;
                     };
                     const senderId = payload?.from || 'xiotbox';
-                    const fullConfig = loadCurrentConfig(ctx, cfg);
+                    const fullConfig = resolveEffectiveConfig(ctx, cfg);
                     const agentId = resolveThreadAgentId(fullConfig, threadId);
                     const sessionKey = buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
                     const counterKey = toolOnlyCounterKey(finalCfg.DEVICE_ID, threadId, senderId);
@@ -2410,20 +2411,24 @@ export const xiotboxPlugin = {
                     lastConnectedAt: Date.now(),
                     lastStatusAt: Date.now(),
                     detail: 'connected',
-                });
+                }, log);
                 e2e.refreshPeerKey().catch((err) => {
                     log?.warn?.(`[XiotBox][${accountId}] E2E peer key refresh failed: ${err?.message || err}`);
                 });
             });
             client.on('disconnected', () => {
                 log?.warn?.(`[XiotBox][${accountId}] Disconnected from Gateway`);
+                const current = activeGatewayAccounts.get(accountId);
+                if (current?.instanceId === instanceId) {
+                    current.connectedAt = undefined;
+                }
                 updateGatewayStatus(ctx, accountId, {
                     running: true,
                     connected: false,
                     lastDisconnectedAt: Date.now(),
                     lastStatusAt: Date.now(),
                     detail: 'disconnected',
-                });
+                }, log);
             });
             client.on('error', (err) => {
                 log?.error?.(`[XiotBox][${accountId}] Client error: ${err.message}`);
@@ -2433,7 +2438,7 @@ export const xiotboxPlugin = {
                     lastStatusAt: Date.now(),
                     detail: 'client_error',
                     error: err?.message || String(err),
-                });
+                }, log);
             });
             client.on('auth_required', (payload) => {
                 log?.error?.(`[XiotBox][${accountId}] Gateway auth required (remote channel paused): ${payload?.message || payload?.code || 'REAUTH_REQUIRED'}`);
@@ -2459,7 +2464,7 @@ export const xiotboxPlugin = {
                     lastStatusAt: Date.now(),
                     detail: 'connect_failed',
                     error: err instanceof Error ? err.message : String(err),
-                });
+                }, log);
                 throw err;
             }
             if (!isCurrentInstance()) {
@@ -2485,7 +2490,7 @@ export const xiotboxPlugin = {
                 lastDisconnectedAt: Date.now(),
                 lastStatusAt: Date.now(),
                 detail: 'stop_account',
-            });
+            }, ctx?.log);
         },
     },
     status: {
