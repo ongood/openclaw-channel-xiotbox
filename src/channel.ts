@@ -5,16 +5,36 @@ import WSSClient from '../wss_client.js';
 import { getXiotboxRuntimeOrNull } from './runtime.js';
 import type { RuntimeReplySurface } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
+import {
+  clearConnectedAt,
+  describeGatewayAccountState,
+  getGatewayAccount,
+  nextGatewayInstanceId,
+  registerGatewayAccount,
+  removeGatewayAccount,
+  setConnectedAt,
+  stopGatewayAccount,
+} from './gateway-state.js';
+import {
+  buildConfig,
+  buildSessionKey,
+  CHANNEL_ID,
+  getChannelConfig,
+  listAccountIds,
+  normalizeAccountId,
+  normalizeAgentId,
+  normalizeContextEpoch,
+  normalizePositiveInt,
+  normalizeStringValue,
+  normalizeStrList,
+  normalizeThreadId,
+  resolveAccount,
+  resolveAgentId,
+  resolveDefaultAccountId,
+  resolveEffectiveConfig,
+  resolveThreadAgentId,
+} from './config.js';
 
-const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
-const DEFAULT_CACHE_MAX = 500;
-const DEFAULT_STREAM_THROTTLE_MS = 35;
-const DEFAULT_PROGRESS_THROTTLE_MS = 1500;
-const DEFAULT_PROGRESS_MAX_UPDATES = 12;
-const DEFAULT_ACCOUNT_ID = 'default';
-const DEFAULT_AGENT_ID = 'main';
-const DEFAULT_THREAD_ID = 'main';
-const CHANNEL_ID = 'xiotbox';
 const SESSION_STORE_CACHE_TTL_MS = 3000;
 const CONTEXT_EPOCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CONTEXT_EPOCH_CACHE_MAX = 2000;
@@ -86,17 +106,8 @@ type GatewayStartContextLike = GatewayContextLike & {
   abortSignal?: AbortSignal;
 };
 
-type ActiveGatewayAccount = {
-  instanceId: number;
-  startedAt: number;
-  connectedAt?: number;
-  stop: null | ((reason?: string) => Promise<void>);
-};
-
 let sessionStoreCache: SessionStoreCache | null = null;
 const contextEpochCache = new Map<string, ContextEpochCacheEntry>();
-const activeGatewayAccounts = new Map<string, ActiveGatewayAccount>();
-let gatewayInstanceSeq = 0;
 
 function getChannelRuntimeSurface(ctx: GatewayContextLike): GatewayContextLike['channelRuntime'] | null {
   return ctx?.channelRuntime || null;
@@ -105,10 +116,6 @@ function getChannelRuntimeSurface(ctx: GatewayContextLike): GatewayContextLike['
 function getReplyApi(ctx: GatewayContextLike): RuntimeReplySurface | null {
   const channelRuntime = getChannelRuntimeSurface(ctx);
   return channelRuntime?.reply || getXiotboxRuntimeOrNull()?.channel?.reply || null;
-}
-
-function resolveEffectiveConfig(ctx: GatewayContextLike, startupCfg: unknown): unknown {
-  return ctx?.cfg ?? getXiotboxRuntimeOrNull()?.config?.loadConfig?.() ?? startupCfg;
 }
 
 function updateGatewayStatus(
@@ -129,73 +136,6 @@ function updateGatewayStatus(
     // Status reporting must never break the channel connection path.
     log?.warn?.(`[XiotBox][${accountId}] status update failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-}
-
-async function stopActiveGatewayAccount(accountId: string, reason: string): Promise<void> {
-  const existing = activeGatewayAccounts.get(accountId);
-  if (existing?.stop) {
-    await existing.stop(reason);
-  } else if (existing) {
-    activeGatewayAccounts.delete(accountId);
-  }
-}
-
-function clearConnectedAtForInstance(accountId: string, instanceId: number): void {
-  const current = activeGatewayAccounts.get(accountId);
-  if (current?.instanceId === instanceId) {
-    current.connectedAt = undefined;
-  }
-}
-
-function normalizeAccountId(value?: string | null): string {
-  const normalized = String(value || '').trim();
-  return normalized || DEFAULT_ACCOUNT_ID;
-}
-
-function normalizeStrList(value: any, fallback: string[]): string[] {
-  if (Array.isArray(value)) {
-    const out = value.map((v) => String(v || '').trim()).filter(Boolean);
-    return out.length ? out : fallback;
-  }
-  const raw = String(value || '').trim();
-  if (!raw) return fallback;
-  const parts = raw
-    .split(',')
-    .map((p) => p.trim())
-    .filter(Boolean);
-  return parts.length ? parts : fallback;
-}
-
-function normalizeThreadId(value?: string | null): string {
-  const normalized = String(value || '').trim();
-  return normalized || DEFAULT_THREAD_ID;
-}
-
-function normalizeContextEpoch(value?: any): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
-  const epoch = Math.floor(parsed);
-  return epoch > 0 ? epoch : 0;
-}
-
-function normalizeAgentId(value?: string | null): string {
-  const normalized = String(value || '').trim().toLowerCase();
-  const safe = normalized
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+/, '')
-    .replace(/-+$/, '')
-    .slice(0, 64);
-  return safe || DEFAULT_AGENT_ID;
-}
-
-function buildSessionKey(
-  agentId: string,
-  deviceId: string,
-  threadId: string,
-  contextEpoch: number = 0,
-): string {
-  const base = `agent:${normalizeAgentId(agentId)}:xiotbox:${deviceId}:${normalizeThreadId(threadId)}`;
-  return contextEpoch > 0 ? `${base}:ctx${contextEpoch}` : base;
 }
 
 function hasOwn(obj: any, key: string): boolean {
@@ -264,27 +204,6 @@ function resolveInboundContextEpoch(params: {
   return { epoch: 0, source: 'default' };
 }
 
-function normalizePositiveInt(value: any): number | undefined {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return undefined;
-  const rounded = Math.floor(parsed);
-  return rounded >= 0 ? rounded : undefined;
-}
-
-function normalizeOptionalBoolean(value: any): boolean | undefined {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') {
-    if (value === 1) return true;
-    if (value === 0) return false;
-  }
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
-  }
-  return undefined;
-}
-
 function resolveHomeDir(): string {
   const explicit = String(process.env.OPENCLAW_HOME || '').trim();
   const fallback = String(process.env.HOME || os.homedir() || process.cwd()).trim() || process.cwd();
@@ -294,42 +213,6 @@ function resolveHomeDir(): string {
     return path.resolve(path.join(fallback, explicit.slice(2)));
   }
   return path.resolve(explicit);
-}
-
-function resolveAgentId(cfg: any): string {
-  const channelCfg = getChannelConfig(cfg);
-  const configured =
-    normalizeStringValue(channelCfg.SESSION_AGENT_ID) ||
-    normalizeStringValue(channelCfg.AGENT_ID) ||
-    normalizeStringValue(cfg?.agents?.defaults?.id) ||
-    DEFAULT_AGENT_ID;
-  return normalizeAgentId(configured);
-}
-
-function readThreadAgentMapValue(map: any, threadId: string): string {
-  if (!map || typeof map !== 'object' || Array.isArray(map)) return '';
-  const normalizedThreadId = normalizeThreadId(threadId);
-  const candidates = [
-    normalizedThreadId,
-    normalizedThreadId.toLowerCase(),
-    threadId,
-    '*',
-    'default',
-  ];
-  for (const key of candidates) {
-    const value = normalizeStringValue(map[key]);
-    if (value) return value;
-  }
-  return '';
-}
-
-function resolveThreadAgentId(cfg: any, threadId: string): string {
-  const channelCfg = getChannelConfig(cfg);
-  const mapped =
-    readThreadAgentMapValue(channelCfg.SESSION_AGENT_MAP, threadId) ||
-    readThreadAgentMapValue(channelCfg.THREAD_AGENT_MAP, threadId) ||
-    '';
-  return normalizeAgentId(mapped || resolveAgentId(cfg));
 }
 
 function expandUserPath(rawPath: string, homeDir: string): string {
@@ -426,47 +309,6 @@ function resolveSessionUsageSnapshot(cfg: any, sessionKey: string): SessionUsage
     contextTokens: normalizePositiveInt(entry.contextTokens),
     totalTokensFresh: entry.totalTokensFresh === true,
     updatedAt: normalizePositiveInt(entry.updatedAt),
-  };
-}
-
-function getChannelConfig(cfg: any) {
-  return cfg?.channels?.[CHANNEL_ID] || {};
-}
-
-function buildConfig(channelCfg: any) {
-  const progressThrottleMs = normalizePositiveInt(channelCfg.PROGRESS_THROTTLE_MS);
-  const progressMaxUpdates = normalizePositiveInt(channelCfg.PROGRESS_MAX_UPDATES);
-  const streamingEnabled = normalizeOptionalBoolean(channelCfg.STREAMING) ?? true;
-  const blockStreamingEnabled =
-    normalizeOptionalBoolean(channelCfg.BLOCK_STREAMING) ??
-    normalizeOptionalBoolean(channelCfg.blockStreaming) ??
-    streamingEnabled;
-  return {
-    GATEWAY_WSS_URL: channelCfg.GATEWAY_WSS_URL || 'ws://localhost:9002/ws/bot',
-    DEVICE_ID: channelCfg.DEVICE_ID,
-    DEVICE_TOKEN: channelCfg.DEVICE_TOKEN,
-    USE_QUERY_AUTH: channelCfg.USE_QUERY_AUTH || false,
-    OUTBOX_MAX: channelCfg.OUTBOX_MAX || 200,
-    OUTBOX_TTL_MS: channelCfg.OUTBOX_TTL_MS || 5 * 60 * 1000,
-    COMMAND_CACHE_TTL_MS: channelCfg.COMMAND_CACHE_TTL_MS || DEFAULT_CACHE_TTL_MS,
-    COMMAND_CACHE_MAX: channelCfg.COMMAND_CACHE_MAX || DEFAULT_CACHE_MAX,
-    STREAMING: streamingEnabled,
-    BLOCK_STREAMING: blockStreamingEnabled,
-    STREAM_THROTTLE_MS: channelCfg.STREAM_THROTTLE_MS || DEFAULT_STREAM_THROTTLE_MS,
-    PROGRESS_UPDATES: channelCfg.PROGRESS_UPDATES !== false,
-    PROGRESS_THROTTLE_MS: progressThrottleMs ?? DEFAULT_PROGRESS_THROTTLE_MS,
-    PROGRESS_MAX_UPDATES: progressMaxUpdates ?? DEFAULT_PROGRESS_MAX_UPDATES,
-    API_BASE_URL: channelCfg.API_BASE_URL,
-    E2E_KEY_PATH: channelCfg.E2E_KEY_PATH,
-    E2E_ROTATE: channelCfg.E2E_ROTATE,
-    IDENTITY_KEY_PATH: channelCfg.IDENTITY_KEY_PATH,
-    TRUST_PATH: channelCfg.TRUST_PATH,
-    ALLOW_NEW_CLIENT_IDENTITIES: channelCfg.ALLOW_NEW_CLIENT_IDENTITIES,
-    // Default to chat only. Control scope should be explicitly enabled on the device that
-    // *executes* control actions (e.g. XiotBox Android Control Agent), not on the host OpenClaw.
-    SCOPES: normalizeStrList(channelCfg.SCOPES, ['chat']),
-    CONTROL_ACTIONS: normalizeStrList(channelCfg.CONTROL_ACTIONS, []),
-    HELLO_EXTRA: undefined as any,
   };
 }
 
@@ -629,12 +471,6 @@ function shouldSkipReply(text: string): boolean {
   if (trimmed === 'NO_REPLY') return true;
   if (trimmed.endsWith('NO_REPLY')) return true;
   return false;
-}
-
-function normalizeStringValue(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed || undefined;
 }
 
 function readStringField(record: any, keys: string[]): string | undefined {
@@ -1247,31 +1083,6 @@ function isConfiguredCfg(cfg: any): boolean {
   return listAccountIds(cfg).length > 0;
 }
 
-function listAccountIds(cfg: any): string[] {
-  const root = getChannelConfig(cfg);
-  const rootDeviceId = root.DEVICE_ID;
-  const rootDeviceToken = root.DEVICE_TOKEN;
-  return rootDeviceId && rootDeviceToken ? [DEFAULT_ACCOUNT_ID] : [];
-}
-
-function resolveDefaultAccountId(cfg: any): string {
-  const ids = listAccountIds(cfg);
-  if (ids.includes(DEFAULT_ACCOUNT_ID)) {
-    return DEFAULT_ACCOUNT_ID;
-  }
-  return ids[0] || DEFAULT_ACCOUNT_ID;
-}
-
-function resolveAccount(cfg: any, accountId?: string) {
-  const root = getChannelConfig(cfg);
-  const resolvedAccountId = normalizeAccountId(accountId);
-  return {
-    accountId: resolvedAccountId,
-    config: root,
-    enabled: root.enabled !== false,
-  };
-}
-
 function detectToolSignals(outPayload: any): boolean {
   if (!outPayload || typeof outPayload !== 'object') return false;
   return Boolean(
@@ -1666,6 +1477,7 @@ export const xiotboxPlugin = {
     label: 'XiotBox',
     selectionLabel: 'XiotBox Gateway',
     blurb: 'Connects XiotBox devices and dispatches messages to OpenClaw runtime.',
+    docsPath: 'README.md',
     order: 100,
   },
   capabilities: {
@@ -1686,15 +1498,15 @@ export const xiotboxPlugin = {
       Boolean(account?.config?.DEVICE_ID && account?.config?.DEVICE_TOKEN),
     describeAccount: (account: any) => {
       const accountId = normalizeAccountId(account?.accountId);
-      const active = activeGatewayAccounts.get(accountId);
+      const active = describeGatewayAccountState(accountId);
       return {
         accountId,
         name: account.config?.name || 'XiotBox',
         enabled: account.enabled,
         configured: Boolean(account.config?.DEVICE_ID && account.config?.DEVICE_TOKEN),
-        connected: Boolean(active?.connectedAt),
-        startedAt: active?.startedAt ?? null,
-        lastConnectedAt: active?.connectedAt ?? null,
+        connected: active.connected,
+        startedAt: active.startedAt,
+        lastConnectedAt: active.lastConnectedAt,
       };
     },
   },
@@ -1702,7 +1514,7 @@ export const xiotboxPlugin = {
     startAccount: async (ctx: GatewayStartContextLike) => {
       const { cfg, log, abortSignal } = ctx;
       const accountId = normalizeAccountId(ctx?.accountId);
-      const instanceId = ++gatewayInstanceSeq;
+      const instanceId = nextGatewayInstanceId();
       const finalCfg = buildConfig(getChannelConfig(cfg));
       updateGatewayStatus(ctx, accountId, {
         running: true,
@@ -1723,7 +1535,7 @@ export const xiotboxPlugin = {
         throw new Error(err);
       }
 
-      const existing = activeGatewayAccounts.get(accountId);
+      const existing = getGatewayAccount(accountId);
       if (existing) {
         log?.warn?.(
           `[XiotBox][${accountId}] startAccount called while an instance is already active ` +
@@ -1740,12 +1552,12 @@ export const xiotboxPlugin = {
         }
       }
 
-      activeGatewayAccounts.set(accountId, {
+      registerGatewayAccount(accountId, {
         instanceId,
         startedAt: Date.now(),
         stop: null,
       });
-      const isCurrentInstance = () => activeGatewayAccounts.get(accountId)?.instanceId === instanceId;
+      const isCurrentInstance = () => getGatewayAccount(accountId)?.instanceId === instanceId;
 
       const client = new WSSClient(finalCfg);
       let stopPromise: Promise<void> | null = null;
@@ -1754,10 +1566,7 @@ export const xiotboxPlugin = {
           return stopPromise;
         }
         stopPromise = (async () => {
-          const current = activeGatewayAccounts.get(accountId);
-          if (current?.instanceId === instanceId) {
-            activeGatewayAccounts.delete(accountId);
-          }
+          removeGatewayAccount(accountId, instanceId);
           updateGatewayStatus(ctx, accountId, {
             running: false,
             connected: false,
@@ -1770,7 +1579,7 @@ export const xiotboxPlugin = {
         })();
         return stopPromise;
       };
-      activeGatewayAccounts.set(accountId, {
+      registerGatewayAccount(accountId, {
         instanceId,
         startedAt: Date.now(),
         stop: stopCurrent,
@@ -2700,10 +2509,7 @@ export const xiotboxPlugin = {
 
       client.on('connected', () => {
         log?.info?.(`[XiotBox][${accountId}] Connected to Gateway`);
-        const current = activeGatewayAccounts.get(accountId);
-        if (current?.instanceId === instanceId) {
-          current.connectedAt = Date.now();
-        }
+        setConnectedAt(accountId, instanceId, Date.now());
         updateGatewayStatus(ctx, accountId, {
           running: true,
           connected: true,
@@ -2718,7 +2524,7 @@ export const xiotboxPlugin = {
 
       client.on('disconnected', () => {
         log?.warn?.(`[XiotBox][${accountId}] Disconnected from Gateway`);
-        clearConnectedAtForInstance(accountId, instanceId);
+        clearConnectedAt(accountId, instanceId);
         updateGatewayStatus(ctx, accountId, {
           running: true,
           connected: false,
@@ -2730,7 +2536,7 @@ export const xiotboxPlugin = {
 
       client.on('error', (err: any) => {
         log?.error?.(`[XiotBox][${accountId}] Client error: ${err.message}`);
-        clearConnectedAtForInstance(accountId, instanceId);
+        clearConnectedAt(accountId, instanceId);
         updateGatewayStatus(ctx, accountId, {
           running: true,
           connected: false,
@@ -2759,7 +2565,7 @@ export const xiotboxPlugin = {
         await client.connect();
       } catch (err) {
         if (isCurrentInstance()) {
-          activeGatewayAccounts.delete(accountId);
+          removeGatewayAccount(accountId, instanceId);
         }
         updateGatewayStatus(ctx, accountId, {
           running: false,
@@ -2788,7 +2594,7 @@ export const xiotboxPlugin = {
     },
     stopAccount: async (ctx: GatewayStartContextLike) => {
       const accountId = normalizeAccountId(ctx?.accountId);
-      await stopActiveGatewayAccount(accountId, 'stop_account');
+      await stopGatewayAccount(accountId, 'stop_account');
       updateGatewayStatus(ctx, accountId, {
         running: false,
         connected: false,

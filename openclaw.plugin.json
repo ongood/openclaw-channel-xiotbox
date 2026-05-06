@@ -3,6 +3,25 @@
   "name": "XiotBox OpenClaw Channel",
   "description": "XiotBox channel plugin for OpenClaw with remote chat delivery, optional device-control tools, and bridge-mode support.",
   "version": "3.0.2",
+  "docsPath": "README.md",
+  "contracts": {
+    "tools": [
+      "xiotbox_local_control",
+      "xiotbox_control"
+    ]
+  },
+  "toolMetadata": [
+    {
+      "id": "xiotbox_local_control",
+      "name": "XiotBox Local Control",
+      "description": "Optional local-control HTTP tool for trusted XiotBox device-control actions."
+    },
+    {
+      "id": "xiotbox_control",
+      "name": "XiotBox Control",
+      "description": "Optional XiotBox control-plan tool for trusted device-control workflows."
+    }
+  ],
   "channels": [
     "xiotbox"
   ],

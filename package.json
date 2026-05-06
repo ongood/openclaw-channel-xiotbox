@@ -87,7 +87,14 @@
       "label": "XiotBox",
       "selectionLabel": "XiotBox Gateway",
       "blurb": "Connects to XiotBox Gateway via WebSocket Secure (WSS) protocol.",
+      "docsPath": "README.md",
       "order": 100
+    },
+    "contracts": {
+      "tools": [
+        "xiotbox_local_control",
+        "xiotbox_control"
+      ]
     }
   }
 }
