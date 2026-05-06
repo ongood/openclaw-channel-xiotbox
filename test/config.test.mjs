@@ -94,3 +94,15 @@ test('resolveEffectiveConfig prefers ctx.cfg over runtime fallback', () => {
   });
   assert.deepEqual(resolveEffectiveConfig({ cfg: { source: 'ctx' } }, { source: 'startup' }), { source: 'ctx' });
 });
+
+test('resolveEffectiveConfig falls back from runtime to startup config', () => {
+  setXiotboxRuntime({
+    config: {
+      loadConfig: () => ({ source: 'runtime' }),
+    },
+  });
+  assert.deepEqual(resolveEffectiveConfig({}, { source: 'startup' }), { source: 'runtime' });
+
+  setXiotboxRuntime({});
+  assert.deepEqual(resolveEffectiveConfig({}, { source: 'startup' }), { source: 'startup' });
+});

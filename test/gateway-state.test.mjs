@@ -105,6 +105,51 @@ test('stopGatewayAccount is idempotent under concurrent calls', async () => {
   resolveStop();
   await Promise.all([first, second]);
   assert.equal(calls, 1);
+  assert.equal(getGatewayAccount(accountId), undefined);
+});
+
+test('stopGatewayAccount does not delete a newer replacement instance', async () => {
+  const accountId = uniqueAccount('stop-replaced');
+  let resolveStop;
+  const stopStarted = new Promise((resolve) => {
+    resolveStop = resolve;
+  });
+  registerGatewayAccount(accountId, {
+    instanceId: 601,
+    startedAt: 6000,
+    stop: async () => {
+      await stopStarted;
+    },
+  });
+
+  const stopping = stopGatewayAccount(accountId, 'replace');
+  registerGatewayAccount(accountId, {
+    instanceId: 602,
+    startedAt: 6200,
+    stop: null,
+  });
+  resolveStop();
+  await stopping;
+
+  assert.deepEqual(getGatewayAccount(accountId), {
+    instanceId: 602,
+    startedAt: 6200,
+    connectedAt: undefined,
+    stop: null,
+  });
+});
+
+test('stopGatewayAccount removes current account when stop handler is null', async () => {
+  const accountId = uniqueAccount('stop-null');
+  registerGatewayAccount(accountId, {
+    instanceId: 701,
+    startedAt: 7000,
+    stop: null,
+  });
+
+  await stopGatewayAccount(accountId, 'stop-null');
+
+  assert.equal(getGatewayAccount(accountId), undefined);
 });
 
 test('nextGatewayInstanceId increments monotonically', () => {

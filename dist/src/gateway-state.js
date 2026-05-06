@@ -29,14 +29,16 @@ export async function stopGatewayAccount(accountId, reason) {
     const current = activeGatewayAccounts.get(accountId);
     if (!current)
         return;
+    const instanceId = current.instanceId;
     if (!current.stop) {
-        activeGatewayAccounts.delete(accountId);
+        removeGatewayAccount(accountId, instanceId);
         return;
     }
     if (!current.stopPromise) {
         current.stopPromise = Promise.resolve(current.stop(reason));
     }
     await current.stopPromise;
+    removeGatewayAccount(accountId, instanceId);
 }
 export function setConnectedAt(accountId, instanceId, timestamp) {
     const current = activeGatewayAccounts.get(accountId);
