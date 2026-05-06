@@ -9,7 +9,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-INPUT="${1:-3.1.0}"
+INPUT="${1:-3.1.1}"
 if [[ "$INPUT" == http://* || "$INPUT" == https://* || "$INPUT" == git@* || "$INPUT" == ssh://* || "$INPUT" == file://* ]]; then
   TAG=""
   REPO="$INPUT"
@@ -33,6 +33,7 @@ OPENCLAW_WIPE_CHANNELS="${OPENCLAW_WIPE_CHANNELS:-0}"
 OPENCLAW_SKIP_DOCTOR="${OPENCLAW_SKIP_DOCTOR:-auto}"
 OPENCLAW_RESTART_GATEWAY="${OPENCLAW_RESTART_GATEWAY:-auto}"
 OPENCLAW_GATEWAY_LOG="${OPENCLAW_GATEWAY_LOG:-$HOME/.openclaw/gateway.log}"
+OPENCLAW_XIOTBOX_SKIP_NPM_INSTALL="${OPENCLAW_XIOTBOX_SKIP_NPM_INSTALL:-0}"
 
 is_termux=0
 if [ -n "${TERMUX_VERSION:-}" ] || [[ "${PREFIX:-}" == *"/com.termux/"* ]]; then
@@ -132,6 +133,26 @@ preflight() {
 }
 
 preflight
+
+install_plugin_runtime_deps() {
+  if is_truthy "$OPENCLAW_XIOTBOX_SKIP_NPM_INSTALL"; then
+    warn "Skipping plugin runtime dependency install because OPENCLAW_XIOTBOX_SKIP_NPM_INSTALL is set."
+    return 0
+  fi
+
+  if [ ! -d "$EXT_DIR" ]; then
+    fail "Plugin directory not found after install: $EXT_DIR"
+  fi
+  if [ ! -f "$EXT_DIR/package.json" ]; then
+    fail "Plugin package.json not found after install: $EXT_DIR/package.json"
+  fi
+
+  info "Installing xiotbox runtime dependencies in $EXT_DIR"
+  (
+    cd "$EXT_DIR"
+    npm install --omit=dev
+  ) || fail "npm install --omit=dev failed in $EXT_DIR"
+}
 
 prepare_install_target() {
   local raw="$REPO"
@@ -344,6 +365,10 @@ set -e
 if [ -d "$OLD_EXT_DIR" ] && [ ! -d "$EXT_DIR" ]; then
   mkdir -p "$(dirname "$EXT_DIR")"
   mv "$OLD_EXT_DIR" "$EXT_DIR"
+fi
+
+if [ "$install_rc" -eq 0 ]; then
+  install_plugin_runtime_deps
 fi
 
 if [ -f "$CFG_PATH" ]; then

@@ -1,6 +1,6 @@
 {
   "name": "xiotbox",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "OpenClaw XiotBox channel plugin with remote chat delivery, optional device-control tools, and bridge-mode support.",
   "type": "module",
   "main": "dist/index.js",
