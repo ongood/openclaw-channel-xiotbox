@@ -122,10 +122,10 @@ Minimal plugin-mode example in `openclaw.json`:
   "channels": {
     "xiotbox": {
       "enabled": true,
-      "GATEWAY_WSS_URL": "wss://gateway.example/ws/openclaw",
+      "GATEWAY_WSS_URL": "wss://gw.xiotbox.com/ws/bot",
       "DEVICE_ID": "YOUR_DEVICE_ID",
       "DEVICE_TOKEN": "YOUR_DEVICE_TOKEN",
-      "API_BASE_URL": "https://api.xiotbox.com"
+      "API_BASE_URL": "https://gw.xiotbox.com"
     }
   }
 }
@@ -224,14 +224,14 @@ Minimal `config.json`:
 ```json
 {
   "xiotbox": {
-    "GATEWAY_WSS_URL": "wss://gateway.example/ws/openclaw",
-    "GATEWAY_API_URL": "https://api.xiotbox.com",
+    "GATEWAY_WSS_URL": "wss://gw.xiotbox.com/ws/bot",
+    "GATEWAY_API_URL": "https://gw.xiotbox.com",
     "STREAMING": true,
     "PROGRESS_UPDATES": true
   },
   "bridge": {
     "enabled": true,
-    "endpoint": "wss://gateway.example/ws/openclaw",
+    "endpoint": "wss://gw.xiotbox.com/ws/bot",
     "openclawHost": "127.0.0.1",
     "openclawPort": 18789,
     "agentId": "main"
@@ -420,13 +420,11 @@ the identity changes or the approved scope set is reset.
 - If publishing publicly, review all examples for real endpoints, real tokens, or internal hostnames before release.
 - If enabling remote device-control tools, restrict `SCOPES` and `CONTROL_ACTIONS` to the minimum needed.
 
-## Release-Prep Notes
+## Release Notes
 
 - The current path/source installation behavior is intentionally preserved.
-- This repository is suitable for release preparation, but public catalog metadata should be confirmed before publication.
-- See the following release-prep documents:
-  - [RELEASE_PREP_CHECKLIST.md](./docs/release/RELEASE_PREP_CHECKLIST.md)
-  - [CLAWHUB_PUBLISHING_NOTES.md](./docs/release/CLAWHUB_PUBLISHING_NOTES.md)
+- Public catalog metadata must be confirmed against the target OpenClaw release before publication.
+- See [RELEASE_CHECKLIST.md](./docs/release/RELEASE_CHECKLIST.md).
 
 ## Related Documents
 
