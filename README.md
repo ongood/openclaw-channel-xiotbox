@@ -425,13 +425,13 @@ the identity changes or the approved scope set is reset.
 - The current path/source installation behavior is intentionally preserved.
 - This repository is suitable for release preparation, but public catalog metadata should be confirmed before publication.
 - See the following release-prep documents:
-  - [RELEASE_PREP_CHECKLIST.md](./RELEASE_PREP_CHECKLIST.md)
-  - [CLAWHUB_PUBLISHING_NOTES.md](./CLAWHUB_PUBLISHING_NOTES.md)
+  - [RELEASE_PREP_CHECKLIST.md](./docs/release/RELEASE_PREP_CHECKLIST.md)
+  - [CLAWHUB_PUBLISHING_NOTES.md](./docs/release/CLAWHUB_PUBLISHING_NOTES.md)
 
 ## Related Documents
 
-- [CHAT_MEDIA_CONTRACT.md](./CHAT_MEDIA_CONTRACT.md)
-- [TEST_PLAN.md](./TEST_PLAN.md)
+- [CHAT_MEDIA_CONTRACT.md](./docs/contracts/CHAT_MEDIA_CONTRACT.md)
+- [TEST_PLAN.md](./docs/TEST_PLAN.md)
 - [docs/plugins-git-install-termux.md](./docs/plugins-git-install-termux.md)
 
 ## License
