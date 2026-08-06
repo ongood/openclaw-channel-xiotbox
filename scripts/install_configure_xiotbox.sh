@@ -21,7 +21,7 @@ Examples:
 
   bash scripts/install_configure_xiotbox.sh \
     wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN> - \
-  https://github.com/ongood/openclaw-channel-xiotbox.git#4.0.1 0
+  https://github.com/xiotbox/openclaw-channel-xiotbox.git#4.0.1 0
 
 Notes:
   - API_BASE_URL: pass '-' to keep existing config value (or leave empty).

@@ -161,7 +161,7 @@
     "installs": {
       "xiotbox": {
         "source": "npm",
-        "spec": "https://github.com/ongood/openclaw-channel-xiotbox.git#1.0.39",
+        "spec": "https://github.com/xiotbox/openclaw-channel-xiotbox.git#1.0.39",
         "installPath": "/data/data/app.botdrop/files/home/.openclaw/extensions/xiotbox",
         "version": "1.0.39",
         "installedAt": "<REDACTED_TIMESTAMP>"

@@ -35,7 +35,7 @@ import: skipped: resolve failed
 OpenClaw version: 2026.5.4 (325df3e)
 Node version: 24.14.0
 Plugin path: /root/.openclaw/extensions/xiotbox
-Install mode: https://github.com/ongood/openclaw-channel-xiotbox.git#3.1
+Install mode: https://github.com/xiotbox/openclaw-channel-xiotbox.git#3.1
 ```
 
 同时，当前手动入口回归通过：
@@ -180,7 +180,7 @@ git diff --check: passed
 服务器安装命令：
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh https://github.com/ongood/openclaw-channel-xiotbox.git#3.1
+bash scripts/update_openclaw_xiotbox.sh https://github.com/xiotbox/openclaw-channel-xiotbox.git#3.1
 cd ~/.openclaw/extensions/xiotbox
 npm install --omit=dev
 systemctl restart openclaw-gateway

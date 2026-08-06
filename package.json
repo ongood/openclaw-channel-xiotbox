@@ -4,13 +4,13 @@
   "description": "OpenClaw XiotBox channel plugin with remote chat delivery, optional device-control tools, and bridge-mode support.",
   "type": "module",
   "main": "dist/index.js",
-  "homepage": "https://github.com/ongood/openclaw-channel-xiotbox",
+  "homepage": "https://github.com/xiotbox/openclaw-channel-xiotbox",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ongood/openclaw-channel-xiotbox.git"
+    "url": "git+https://github.com/xiotbox/openclaw-channel-xiotbox.git"
   },
   "bugs": {
-    "url": "https://github.com/ongood/openclaw-channel-xiotbox/issues"
+    "url": "https://github.com/xiotbox/openclaw-channel-xiotbox/issues"
   },
   "keywords": [
     "openclaw",

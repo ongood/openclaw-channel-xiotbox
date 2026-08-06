@@ -15,7 +15,7 @@ if [[ "$INPUT" == http://* || "$INPUT" == https://* || "$INPUT" == git@* || "$IN
   REPO="$INPUT"
 else
   TAG="$INPUT"
-  REPO="https://github.com/ongood/openclaw-channel-xiotbox.git#${TAG}"
+  REPO="https://github.com/xiotbox/openclaw-channel-xiotbox.git#${TAG}"
 fi
 
 INSTALL_TARGET="$REPO"

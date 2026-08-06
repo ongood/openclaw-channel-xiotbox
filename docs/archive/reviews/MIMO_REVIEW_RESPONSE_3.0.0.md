@@ -9,7 +9,7 @@
 - 分支：`3.0`
 - Tag：`3.0.0`
 - Commit：`eb08b49 feat: start xiotbox 3.0 channel runtime lifecycle`
-- 远程仓库：`github.com/ongood/openclaw-channel-xiotbox`
+- 远程仓库：`github.com/xiotbox/openclaw-channel-xiotbox`
 
 本轮没有把所有架构建议一次性做完，而是优先处理对线上稳定性、OpenClaw 新版运行时兼容性、生命周期完整性和发布可信度影响最大的部分。原因是该插件已经在真实 XiotBox/OpenClaw 通道中运行，过大的单次重构会增加回归风险。
 

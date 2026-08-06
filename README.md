@@ -65,7 +65,7 @@ systemctl restart openclaw-gateway
 ### Option B: Source checkout for bridge mode
 
 ```bash
-git clone https://github.com/ongood/openclaw-channel-xiotbox.git
+git clone https://github.com/xiotbox/openclaw-channel-xiotbox.git
 cd openclaw-channel-xiotbox
 npm install
 npm run build

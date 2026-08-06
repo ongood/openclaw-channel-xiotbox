@@ -33,7 +33,7 @@ Do not migrate `index.ts` or `setup-entry.ts` until this spike has a clear answe
 - OpenClaw version: `2026.5.4 (325df3e)`
 - Node version: `24.14.0`
 - OS: Linux `6.8.0-71-generic` x64
-- Install mode: Git branch install via `https://github.com/ongood/openclaw-channel-xiotbox.git#3.1`
+- Install mode: Git branch install via `https://github.com/xiotbox/openclaw-channel-xiotbox.git#3.1`
 - Plugin path: `/root/.openclaw/extensions/xiotbox`
 
 Fill environment values with:
