@@ -1,7 +1,9 @@
 # TEST_PLAN.md - xiotbox Quality and Regression Plan
 
-> Owner: Role F (quality and regression)
-> Last Updated: 2026-02-19
+> Type: CURRENT TEST STRATEGY · Last verified: 2026-08-09
+> Owner: openclaw-channel-xiotbox maintainers
+
+The commands and coverage layers below are normative. Individual pass results come from CI/test output and are not permanently guaranteed by this document.
 
 ## 1. Test Scope
 

@@ -1,8 +1,8 @@
 # OpenClaw Entry Contract Spike for XiotBox 3.1
 
-> Status: in progress
+> Type: COMPLETED SPIKE · Decision recorded for 3.1 · Not current 4.0.1 architecture
 >
-> Goal: verify whether `defineBundledChannelEntry` / `defineBundledChannelSetupEntry` can be safely used by the external `openclaw-channel-xiotbox` plugin before changing the production entrypoint.
+> Goal: record the completed 3.1 investigation. Current behavior must be verified against version 4.0.1 code and tests.
 
 ## Decision Rule
 
