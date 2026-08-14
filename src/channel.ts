@@ -5,6 +5,12 @@ import WSSClient from '../wss_client.js';
 import { getXiotboxRuntimeOrNull } from './runtime.js';
 import type { RuntimeReplySurface } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
+import {
+  handleGatewayApprovalResolve,
+  registerActiveApprovalBinding,
+  registerApprovalLifecycleAccount,
+  xiotboxApprovalCapability,
+} from './approval-lifecycle.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import {
   registerActiveSubagentParent,
@@ -1497,6 +1503,7 @@ export const xiotboxPlugin = {
     outbound: false,
   },
   reload: { configPrefixes: ['channels.xiotbox'] },
+  approvalCapability: xiotboxApprovalCapability,
   config: {
     listAccountIds: (cfg: any): string[] => listAccountIds(cfg),
     resolveAccount: (cfg: any, accountId?: string) => resolveAccount(cfg, accountId),
@@ -1572,6 +1579,11 @@ export const xiotboxPlugin = {
         send: (eventPayload) => client.sendMessage('V2.EVENT', eventPayload),
         logger: log,
       });
+      const unregisterApprovalAccount = registerApprovalLifecycleAccount({
+        accountId,
+        deviceId: finalCfg.DEVICE_ID,
+        emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
+      });
       const unregisterSubagentAccount = registerSubagentLifecycleAccount({
         deviceId: finalCfg.DEVICE_ID,
         emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
@@ -1592,6 +1604,7 @@ export const xiotboxPlugin = {
             detail: reason,
           }, log);
           log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
+          unregisterApprovalAccount();
           unregisterSubagentAccount();
           eventOutbox.stop();
           await client.disconnect();
@@ -2290,6 +2303,18 @@ export const xiotboxPlugin = {
                 traceId: lifecycleContext.traceId,
               })
             : () => {};
+          const unregisterApprovalBinding = conversationBinding && lifecycleContext
+            ? registerActiveApprovalBinding({
+                accountId,
+                deviceId: finalCfg.DEVICE_ID,
+                sessionKey,
+                bindingId: lifecycleContext.bindingId,
+                conversationId: lifecycleContext.conversationId,
+                agentId,
+                runId: lifecycleContext.runId,
+                traceId: lifecycleContext.traceId,
+              })
+            : () => {};
           try {
           if (createDispatcher && finalizeCtx && dispatchFromConfig) {
             streamBlocksViaReplyOptions = true;
@@ -2397,6 +2422,7 @@ export const xiotboxPlugin = {
             await Promise.resolve();
           }
           } finally {
+            unregisterApprovalBinding();
             unregisterSubagentParent();
             unregisterToolRun();
           }
@@ -2638,6 +2664,20 @@ export const xiotboxPlugin = {
 
       client.on('V2.EVENT_ACK', (ack: any) => {
         eventOutbox.acknowledge(ack || {});
+      });
+
+      client.on('V2.APPROVAL_RESOLVE', async (request: any) => {
+        const result = await handleGatewayApprovalResolve({
+          accountId,
+          request,
+          cfg: resolveEffectiveConfig(ctx, cfg),
+          sendAck: (ack) => client.sendMessage('V2.APPROVAL_ACK', ack),
+        });
+        if (!result.ok) {
+          log?.warn?.(
+            `[XiotBox][${accountId}] approval resolve failed request_id=${String(request?.request_id || '').trim()} error=${result.error}`,
+          );
+        }
       });
 
       client.on('disconnected', () => {

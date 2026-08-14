@@ -300,6 +300,9 @@ class WSSClient extends EventEmitter {
             case 'V2.EVENT_ACK':
                 this.emit('V2.EVENT_ACK', payload);
                 break;
+            case 'V2.APPROVAL_RESOLVE':
+                this.emit('V2.APPROVAL_RESOLVE', payload);
+                break;
             case 'ERROR':
                 console.error('[WSS] Server error:', payload);
                 if (payload.code === 'REAUTH_REQUIRED') {

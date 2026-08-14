@@ -16,6 +16,7 @@
   "requiredFiles": [
     "src/plugin-sdk/plugin-entry.ts",
     "src/plugin-sdk/thread-bindings-runtime.ts",
+    "src/plugin-sdk/approval-gateway-runtime.ts",
     "src/channels/plugins/types.adapters.ts"
   ],
   "requiredSymbols": [
@@ -25,6 +26,8 @@
     "after_tool_call",
     "subagent_spawned",
     "subagent_ended",
+    "approvalCapability",
+    "resolveApprovalOverGateway",
     "dispatchReplyWithBufferedBlockDispatcher",
     "createReplyDispatcherWithTyping",
     "finalizeInboundContext",
