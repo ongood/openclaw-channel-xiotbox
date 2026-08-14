@@ -852,6 +852,33 @@ export class OpenClawE2E {
     return peers;
   }
 
+  directReplyPeers(): Array<{ publicKey: string; keyId: string }> {
+    // Peer set for a channel-originated direct message (subagent announce,
+    // approval followup) that has no inbound command envelope.  Reuses the
+    // same primaries as collectReplyPeers minus the command-sender peer.
+    const peers: Array<{ publicKey: string; keyId: string }> = [];
+    const seen = new Set<string>();
+    const pushPeer = (peer: { publicKey: string; keyId: string } | null) => {
+      if (!peer) return;
+      const raw = decodePubkey(peer.publicKey || '');
+      if (!raw || raw.length !== PUBKEY_LEN) return;
+      const keyId = String(peer.keyId || '').trim() || computeKeyId(raw);
+      const pubB64 = b64e(raw);
+      const dedupeKey = `${keyId}|${pubB64}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      peers.push({ publicKey: pubB64, keyId });
+    };
+    if (this.peerPublicKey) pushPeer({ publicKey: this.peerPublicKey, keyId: this.peerKeyId });
+    for (const item of this.clientPeerKeys) {
+      pushPeer({ publicKey: item.client_public_key, keyId: item.client_key_id });
+    }
+    for (const peer of loadTrustedClientPeers(this.cfg, this.cfg.DEVICE_ID)) {
+      pushPeer(peer);
+    }
+    return peers;
+  }
+
   encryptText(text: string, meta: any, peer?: { publicKey?: string; keyId?: string }) {
     if (!this.pubRaw || !this.privRaw) throw new Error('missing_keypair');
     const peerRaw = peer?.publicKey ? decodePubkey(peer.publicKey) : this.ensurePeerKey();

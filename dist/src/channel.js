@@ -9,6 +9,7 @@ import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import { registerActiveMemoryBinding, registerMemoryLifecycleAccount, } from './memory-lifecycle.js';
 import { registerActiveSubagentParent, registerSubagentLifecycleAccount, } from './subagent-lifecycle.js';
 import { registerActiveToolRun } from './tool-lifecycle.js';
+import { getDirectSender, registerDirectSender } from './direct-send.js';
 import { clearConnectedAt, describeGatewayAccountState, getGatewayAccount, nextGatewayInstanceId, registerGatewayAccount, removeGatewayAccount, setConnectedAt, stopGatewayAccount, } from './gateway-state.js';
 import { buildConfig, buildSessionKey, CHANNEL_ID, getChannelConfig, listAccountIds, normalizeAccountId, normalizeAgentId, normalizeContextEpoch, normalizePositiveInt, normalizeStringValue, normalizeThreadId, resolveAccount, resolveAgentId, resolveDefaultAccountId, resolveConversationBinding, resolveEffectiveConfig, resolveThreadAgentId, } from './config.js';
 const SESSION_STORE_CACHE_TTL_MS = 3000;
@@ -1287,10 +1288,33 @@ export const xiotboxPlugin = {
         media: true,
         nativeCommands: false,
         blockStreaming: true,
-        outbound: false,
+        outbound: true,
     },
     reload: { configPrefixes: ['channels.xiotbox'] },
     approvalCapability: xiotboxApprovalCapability,
+    outbound: {
+        deliveryMode: 'direct',
+        sendText: async (ctx) => {
+            const sender = getDirectSender(ctx?.accountId || 'default');
+            if (!sender) {
+                throw new Error('xiotbox outbound sender unavailable');
+            }
+            const result = sender({
+                text: ctx?.text || '',
+                threadId: ctx?.threadId ? String(ctx.threadId) : undefined,
+                traceId: ctx?.identity?.id || null,
+            });
+            if (!result.delivered) {
+                throw new Error(result.error || 'xiotbox outbound delivery failed');
+            }
+            return {
+                channel: CHANNEL_ID,
+                messageId: result.commandId || '',
+                conversationId: ctx?.to || undefined,
+                timestamp: Date.now(),
+            };
+        },
+    },
     config: {
         listAccountIds: (cfg) => listAccountIds(cfg),
         resolveAccount: (cfg, accountId) => resolveAccount(cfg, accountId),
@@ -1372,6 +1396,7 @@ export const xiotboxPlugin = {
                 logger: log,
             });
             let stopPromise = null;
+            let unregisterDirectSender = () => { };
             const stopCurrent = async (reason = 'stop') => {
                 if (stopPromise) {
                     return stopPromise;
@@ -1389,6 +1414,7 @@ export const xiotboxPlugin = {
                     unregisterApprovalAccount();
                     unregisterMemoryAccount();
                     unregisterSubagentAccount();
+                    unregisterDirectSender();
                     eventOutbox.stop();
                     await client.disconnect();
                 })();
@@ -1429,6 +1455,52 @@ export const xiotboxPlugin = {
             // Ensure the very first HELLO after connect carries E2E identity claim.
             // WSSClient captures HELLO_EXTRA during construction; update it explicitly.
             client.setHelloExtra(finalCfg.HELLO_EXTRA);
+            // Register a direct (channel-originated) send path used by the outbound
+            // adapter for subagent-completion announce and exec-approval followups.
+            // It mirrors buildEncryptedResult but targets the peer directory instead
+            // of a single inbound command envelope.
+            unregisterDirectSender = registerDirectSender(accountId, ({ text, threadId, traceId }) => {
+                const peers = e2e.directReplyPeers();
+                if (!peers.length) {
+                    return { delivered: false, error: 'no_e2e_peers' };
+                }
+                const commandId = `direct_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+                const resolvedThreadId = normalizeThreadId(threadId || e2e.threadId);
+                const e2eMulti = {};
+                let primaryEnv = null;
+                let primaryKeyId = '';
+                for (const peer of peers) {
+                    const envOut = e2e.encryptText(text, {
+                        direction: 'p2c',
+                        device_id: finalCfg.DEVICE_ID,
+                        thread_id: resolvedThreadId,
+                        command_id: commandId,
+                        content_type: 'text/markdown',
+                        chunk_seq: 0,
+                        enc_v: e2e.encV,
+                    }, { publicKey: peer.publicKey, keyId: peer.keyId });
+                    const envKeyId = peer.keyId || envOut?.key_id || '';
+                    if (!primaryEnv) {
+                        primaryEnv = envOut;
+                        primaryKeyId = envKeyId;
+                    }
+                    e2eMulti[envKeyId || `peer_${Object.keys(e2eMulti).length}`] = envOut;
+                }
+                client.sendMessage('COMMAND_RESULT', {
+                    command_id: commandId,
+                    status: 'success',
+                    trace_id: traceId || null,
+                    result: {
+                        e2e: primaryEnv,
+                        e2e_multi: e2eMulti,
+                        result_key_id: primaryKeyId,
+                        enc_v: e2e.encV,
+                        content_type: 'text/markdown',
+                        chunk_seq: 0,
+                    },
+                });
+                return { delivered: true, commandId };
+            });
             const pruneCache = () => {
                 const now = Date.now();
                 for (const [id, entry] of commandCache.entries()) {

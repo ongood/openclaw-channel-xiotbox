@@ -43,9 +43,12 @@ function normalized(value: unknown): string {
 }
 
 function memoryActionFor(toolName: string): MemoryAction | null {
-  if (READ_TOOLS.has(toolName)) return 'hit';
-  if (SAVE_TOOLS.has(toolName)) return 'saved';
-  if (DELETE_TOOLS.has(toolName)) return 'deleted';
+  // OpenClaw exposes MCP-backed memory tools with an `mcp__<server>__` prefix
+  // (e.g. mcp__openclaw__memory_search); normalize to the bare tool name.
+  const bare = toolName.split('__').pop() || toolName;
+  if (READ_TOOLS.has(bare)) return 'hit';
+  if (SAVE_TOOLS.has(bare)) return 'saved';
+  if (DELETE_TOOLS.has(bare)) return 'deleted';
   return null;
 }
 
@@ -156,18 +159,24 @@ function resolveBinding(event: MemoryAgentEvent): MemoryBinding | null {
   return scoped.length === 1 ? scoped[0] : null;
 }
 
-export function handleMemoryAgentEvent(event: MemoryAgentEvent): void {
-  if (event.stream !== 'tool' || event.data?.phase !== 'result') return;
-  if (event.data?.isError) return;
-  const toolName = normalized(event.data?.name);
-  const action = memoryActionFor(toolName);
+function projectMemoryAction(params: {
+  sessionKey?: string;
+  agentId?: string;
+  toolName: string;
+  toolCallId?: string;
+  result?: unknown;
+}): void {
+  const action = memoryActionFor(params.toolName);
   if (!action) return;
-  const binding = resolveBinding(event);
+  const binding = resolveBinding({
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+  } as MemoryAgentEvent);
   if (!binding) return;
   const account = accounts.get(binding.accountId);
   if (!account) return;
-  const toolCallId = normalized(event.data?.toolCallId);
-  const summary = summarizeMemoryResult(event.data?.result);
+  const toolCallId = normalized(params.toolCallId);
+  const summary = summarizeMemoryResult(params.result);
   account.emit({
     event_id: `${binding.runId}:memory:${toolCallId || action}:${action}`,
     binding_id: binding.bindingId,
@@ -178,13 +187,44 @@ export function handleMemoryAgentEvent(event: MemoryAgentEvent): void {
     visibility: 'user',
     trace_id: binding.traceId,
     payload: {
-      tool_name: toolName,
+      tool_name: params.toolName,
       tool_call_id: toolCallId || undefined,
       status: 'completed',
       memory_action: action,
       count: summary.count,
       refs: summary.refs,
     },
+  });
+}
+
+export function handleMemoryAgentEvent(event: MemoryAgentEvent): void {
+  if (event.stream !== 'tool' || event.data?.phase !== 'result') return;
+  if (event.data?.isError) return;
+  const rawToolName = normalized(event.data?.name);
+  const toolName = rawToolName.split('__').pop() || rawToolName;
+  projectMemoryAction({
+    sessionKey: event.sessionKey,
+    agentId: event.agentId,
+    toolName,
+    toolCallId: event.data?.toolCallId,
+    result: event.data?.result,
+  });
+}
+
+export function handleMemoryAfterToolCall(
+  event: { toolName?: string; result?: unknown; error?: string; toolCallId?: string },
+  ctx: { sessionKey?: string; agentId?: string; toolCallId?: string },
+): void {
+  const rawToolName = normalized(event?.toolName);
+  const toolName = rawToolName.split('__').pop() || rawToolName;
+  if (!memoryActionFor(toolName)) return;
+  if (event?.error) return;
+  projectMemoryAction({
+    sessionKey: ctx?.sessionKey,
+    agentId: ctx?.agentId,
+    toolName,
+    toolCallId: ctx?.toolCallId || event?.toolCallId,
+    result: event?.result,
   });
 }
 

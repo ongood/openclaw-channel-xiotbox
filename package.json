@@ -81,7 +81,7 @@
       "npmSpec": "xiotbox",
       "localPath": "extensions/xiotbox",
       "defaultChoice": "local",
-      "minHostVersion": ">=2026.7.1 <2026.9.0"
+      "minHostVersion": ">=2026.7.1"
     },
     "channel": {
       "id": "xiotbox",
