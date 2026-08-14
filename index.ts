@@ -1,6 +1,7 @@
 import { xiotboxPlugin } from './src/channel.js';
 import { createXiotboxLocalControlTool } from './src/local-control-tool.js';
 import { setXiotboxRuntime } from './src/runtime.js';
+import { handleSubagentEnded, handleSubagentSpawned } from './src/subagent-lifecycle.js';
 import { handleAfterToolCall, handleBeforeToolCall } from './src/tool-lifecycle.js';
 import { createXiotboxControlTool } from './src/xiotbox-control-tool.js';
 
@@ -47,6 +48,8 @@ export default {
     }
     api.on('before_tool_call', handleBeforeToolCall);
     api.on('after_tool_call', handleAfterToolCall);
+    api.on('subagent_spawned', handleSubagentSpawned);
+    api.on('subagent_ended', handleSubagentEnded);
     registerXiotboxTools(api);
   },
 };

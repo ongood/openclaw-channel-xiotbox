@@ -5,6 +5,7 @@ import WSSClient from '../wss_client.js';
 import { getXiotboxRuntimeOrNull } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
+import { registerActiveSubagentParent, registerSubagentLifecycleAccount, } from './subagent-lifecycle.js';
 import { registerActiveToolRun } from './tool-lifecycle.js';
 import { clearConnectedAt, describeGatewayAccountState, getGatewayAccount, nextGatewayInstanceId, registerGatewayAccount, removeGatewayAccount, setConnectedAt, stopGatewayAccount, } from './gateway-state.js';
 import { buildConfig, buildSessionKey, CHANNEL_ID, getChannelConfig, listAccountIds, normalizeAccountId, normalizeAgentId, normalizeContextEpoch, normalizePositiveInt, normalizeStringValue, normalizeThreadId, resolveAccount, resolveAgentId, resolveDefaultAccountId, resolveConversationBinding, resolveEffectiveConfig, resolveThreadAgentId, } from './config.js';
@@ -1352,6 +1353,11 @@ export const xiotboxPlugin = {
                 send: (eventPayload) => client.sendMessage('V2.EVENT', eventPayload),
                 logger: log,
             });
+            const unregisterSubagentAccount = registerSubagentLifecycleAccount({
+                deviceId: finalCfg.DEVICE_ID,
+                emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
+                logger: log,
+            });
             let stopPromise = null;
             const stopCurrent = async (reason = 'stop') => {
                 if (stopPromise) {
@@ -1367,6 +1373,7 @@ export const xiotboxPlugin = {
                         detail: reason,
                     }, log);
                     log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
+                    unregisterSubagentAccount();
                     eventOutbox.stop();
                     await client.disconnect();
                 })();
@@ -1982,6 +1989,17 @@ export const xiotboxPlugin = {
                     const unregisterToolRun = conversationBinding
                         ? registerActiveToolRun({ sessionKey, agentId, emit: emitLifecycleEvent })
                         : () => { };
+                    const unregisterSubagentParent = conversationBinding && lifecycleContext
+                        ? registerActiveSubagentParent({
+                            deviceId: finalCfg.DEVICE_ID,
+                            sessionKey,
+                            bindingId: lifecycleContext.bindingId,
+                            conversationId: lifecycleContext.conversationId,
+                            agentId,
+                            parentRunId: lifecycleContext.runId,
+                            traceId: lifecycleContext.traceId,
+                        })
+                        : () => { };
                     try {
                         if (createDispatcher && finalizeCtx && dispatchFromConfig) {
                             streamBlocksViaReplyOptions = true;
@@ -2080,6 +2098,7 @@ export const xiotboxPlugin = {
                         }
                     }
                     finally {
+                        unregisterSubagentParent();
                         unregisterToolRun();
                     }
                     // Prefer finalText, then blocks (joined with newline), then lastText

@@ -23,6 +23,8 @@
     "registerTool",
     "before_tool_call",
     "after_tool_call",
+    "subagent_spawned",
+    "subagent_ended",
     "dispatchReplyWithBufferedBlockDispatcher",
     "createReplyDispatcherWithTyping",
     "finalizeInboundContext",
