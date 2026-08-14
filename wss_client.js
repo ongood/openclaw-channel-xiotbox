@@ -336,6 +336,12 @@ class WSSClient extends EventEmitter {
                 this.emit('V2.APPROVAL_RESOLVE', payload);
                 break;
 
+            case 'V2.AGENT_PROFILE_SYNC':
+                // Gateway asks the channel to materialize a main agent as
+                // agents.entries.<agent_id>; channel.ts listens for this event.
+                this.emit('V2.AGENT_PROFILE_SYNC', payload);
+                break;
+
             case 'ERROR':
                 console.error('[WSS] Server error:', payload);
                 if (payload.code === 'REAUTH_REQUIRED') {

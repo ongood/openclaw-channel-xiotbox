@@ -7,10 +7,12 @@ import type { RuntimeReplySurface } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
 import {
   handleGatewayApprovalResolve,
+  handleOutboundApprovalPayload,
   registerActiveApprovalBinding,
   registerApprovalLifecycleAccount,
   xiotboxApprovalCapability,
 } from './approval-lifecycle.js';
+import { handleAgentProfileSync } from './agent-profile-sync.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import {
   registerActiveMemoryBinding,
@@ -1531,6 +1533,17 @@ export const xiotboxPlugin = {
         timestamp: Date.now(),
       };
     },
+    // Project approval prompts delivered as outbound text (agent tool-result
+    // followup / approval forwarder) into Gateway approval events so Flutter
+    // can render buttons. OpenClaw 2026.8.1 does not route these through the
+    // channel-native approval runtime for this channel, so the outbound hook
+    // is the only seam that observes them.
+    afterDeliverPayload: async (params: any) => {
+      handleOutboundApprovalPayload({
+        accountId: params?.target?.accountId || 'default',
+        payload: params?.payload,
+      });
+    },
   },
   config: {
     listAccountIds: (cfg: any): string[] => listAccountIds(cfg),
@@ -2778,6 +2791,17 @@ export const xiotboxPlugin = {
             `[XiotBox][${accountId}] approval resolve failed request_id=${String(request?.request_id || '').trim()} error=${result.error}`,
           );
         }
+      });
+
+      client.on('V2.AGENT_PROFILE_SYNC', async (request: any) => {
+        log?.info?.(`[XiotBox][${accountId}] AGENT_PROFILE_SYNC received: ${JSON.stringify(request || {}).slice(0, 300)}`);
+        await handleAgentProfileSync({
+          request,
+          sendAck: (ack) => {
+            log?.info?.(`[XiotBox][${accountId}] AGENT_PROFILE_SYNC ack: ${JSON.stringify(ack || {}).slice(0, 300)}`);
+            client.sendMessage('V2.AGENT_PROFILE_SYNC_ACK', ack);
+          },
+        });
       });
 
       client.on('disconnected', () => {

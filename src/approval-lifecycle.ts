@@ -168,6 +168,184 @@ function buildPendingPayload(params: any) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Outbound approval projection.
+//
+// OpenClaw 2026.8.1 delivers exec/plugin approval prompts to channels as
+// outbound text payloads (agent tool-result followup or the approval forwarder)
+// rather than through the channel-native approval runtime. The rendered
+// payload carries structured metadata under `channelData.execApproval`:
+//   pending:  { approvalId, approvalKind, agentId, allowedDecisions, sessionKey }
+//   resolved: { approvalId, approvalSlug, state: "resolved" }
+// The outbound afterDeliverPayload hook projects these into Gateway approval
+// events so Flutter can render buttons instead of prompting for `/approve`.
+// ---------------------------------------------------------------------------
+
+type OutboundApprovalMeta = {
+  approvalId: string;
+  approvalKind: ApprovalKind;
+  allowedDecisions: ApprovalDecision[];
+  agentId: string;
+  sessionKey: string | null;
+  state: string | null;
+};
+
+function parseOutboundApprovalMeta(payload: any): OutboundApprovalMeta | null {
+  const record = payload?.channelData?.execApproval;
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+  const approvalId = normalized(record.approvalId);
+  if (!approvalId) return null;
+  // Resolved payloads omit approvalKind (channelData.execApproval only carries
+  // approvalId/approvalSlug/state); the pending entry owns the real kind.
+  const approvalKind = approvalKindOf(record.approvalKind) ?? 'exec';
+  const allowed: ApprovalDecision[] = [];
+  for (const value of Array.isArray(record.allowedDecisions) ? record.allowedDecisions : []) {
+    const decision = approvalDecisionOf(value);
+    if (decision && !allowed.includes(decision)) allowed.push(decision);
+  }
+  return {
+    approvalId,
+    approvalKind,
+    allowedDecisions: allowed.length ? allowed : ['deny'],
+    agentId: normalized(record.agentId),
+    sessionKey: normalized(record.sessionKey) || null,
+    state: normalized(record.state) || null,
+  };
+}
+
+function findOutboundApprovalBinding(
+  sessionKey: string | null,
+  accountId: string,
+): ApprovalBinding | null {
+  const account = normalizeAccountId(accountId);
+  if (sessionKey) {
+    const bySession = [...(activeBindings.get(sessionKey)?.values() || [])];
+    const scoped = bySession.filter((binding) => binding.accountId === account);
+    if (scoped.length === 1) return scoped[0];
+  }
+  // Fallback for payloads that omit sessionKey (agent tool-result followups):
+  // a single active conversation binding for the account.
+  const byAccount = [...activeBindings.values()]
+    .flatMap((bindings) => [...bindings.values()])
+    .filter((binding) => binding.accountId === account);
+  return byAccount.length === 1 ? byAccount[0] : null;
+}
+
+function parseResolvedDecision(text: string): ApprovalDecision | null {
+  const match = text.match(/✅ (?:Exec|Plugin) approval (allowed once|allowed always|denied)\./);
+  if (!match) return null;
+  if (match[1] === 'allowed once') return 'allow-once';
+  if (match[1] === 'allowed always') return 'allow-always';
+  return 'deny';
+}
+
+function parseResolvedBy(text: string): string | null {
+  const match = text.match(/Resolved by ([^.]+)\./);
+  return match ? normalized(match[1]) || null : null;
+}
+
+function findApprovalAccount(accountId: string): ApprovalAccount | null {
+  return accounts.get(normalizeAccountId(accountId)) || null;
+}
+
+/** Projects approval.requested from an outbound pending approval payload. Idempotent per approval id. */
+export function projectOutboundApprovalRequested(params: {
+  accountId: string;
+  payload: any;
+}): boolean {
+  const meta = parseOutboundApprovalMeta(params.payload);
+  if (!meta || meta.state === 'resolved') return false;
+  if (pendingEntries.has(meta.approvalId)) return false;
+  const binding = findOutboundApprovalBinding(meta.sessionKey, params.accountId);
+  if (!binding || !findApprovalAccount(binding.accountId)) return false;
+  const entry: PendingApprovalEntry = {
+    accountId: binding.accountId,
+    approvalId: meta.approvalId,
+    approvalKind: meta.approvalKind,
+    binding,
+  };
+  emitApprovalEvent(entry, 'approval.requested', {
+    approval_id: meta.approvalId,
+    approval_kind: meta.approvalKind,
+    status: 'pending',
+    allowed_decisions: meta.allowedDecisions,
+    agent_id: meta.agentId || binding.agentId,
+  });
+  pendingEntries.set(entry.approvalId, entry);
+  return true;
+}
+
+/** Projects approval.resolved from an outbound resolved approval payload. */
+export function projectOutboundApprovalResolved(params: {
+  accountId: string;
+  payload: any;
+}): boolean {
+  const meta = parseOutboundApprovalMeta(params.payload);
+  if (!meta || meta.state !== 'resolved') return false;
+  const pending = pendingEntries.get(meta.approvalId);
+  if (!pending) return false;
+  const text = typeof params.payload?.text === 'string' ? params.payload.text : '';
+  const decision = parseResolvedDecision(text);
+  const resolvedBy =
+    resolvingReviewers.get(meta.approvalId) ||
+    parseResolvedBy(text);
+  emitApprovalEvent(pending, 'approval.resolved', {
+    approval_id: pending.approvalId,
+    approval_kind: pending.approvalKind,
+    status: 'resolved',
+    decision: decision || undefined,
+    resolved_by: resolvedBy || undefined,
+  });
+  pendingEntries.delete(meta.approvalId);
+  resolvingReviewers.delete(meta.approvalId);
+  return true;
+}
+
+/** Projects approval.expired from the forwarder's expiry notice text (no structured metadata). */
+export function projectOutboundApprovalExpired(params: {
+  accountId: string;
+  payload: any;
+}): boolean {
+  const text = typeof params.payload?.text === 'string' ? params.payload.text : '';
+  const match = text.match(/⏱️ (?:Exec|Plugin) approval expired\. ID: (\S+)/);
+  if (!match) return false;
+  const pending = pendingEntries.get(match[1]);
+  if (!pending) return false;
+  emitApprovalEvent(pending, 'approval.expired', {
+    approval_id: pending.approvalId,
+    approval_kind: pending.approvalKind,
+    status: 'expired',
+  });
+  pendingEntries.delete(pending.approvalId);
+  resolvingReviewers.delete(pending.approvalId);
+  return true;
+}
+
+/**
+ * Entry point for the channel outbound afterDeliverPayload hook. Projects
+ * approval.requested / approval.resolved / approval.expired to the XiotBox
+ * Gateway from delivered approval payloads. Never throws.
+ */
+export function handleOutboundApprovalPayload(params: {
+  accountId: string;
+  payload: any;
+}): void {
+  try {
+    const meta = parseOutboundApprovalMeta(params.payload);
+    if (meta) {
+      if (meta.state === 'resolved') {
+        projectOutboundApprovalResolved(params);
+      } else {
+        projectOutboundApprovalRequested(params);
+      }
+      return;
+    }
+    projectOutboundApprovalExpired(params);
+  } catch {
+    // Projection must never break outbound delivery.
+  }
+}
+
 export const xiotboxApprovalCapability = {
   authorizeActorAction: () => ({
     authorized: false,

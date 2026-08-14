@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   handleGatewayApprovalResolve,
+  handleOutboundApprovalPayload,
   registerActiveApprovalBinding,
   registerApprovalLifecycleAccount,
   resetApprovalLifecycleForTest,
@@ -203,5 +204,171 @@ test('V2.APPROVAL_RESOLVE handler acknowledges success and failure', async () =>
   });
 
   harness.unregisterBinding();
+  harness.unregisterAccount();
+});
+
+// Regression: OpenClaw 2026.8.1 delivers exec/plugin approval prompts to this
+// channel as outbound text payloads (agent tool-result followup / approval
+// forwarder), not through the channel-native approval runtime. The outbound
+// afterDeliverPayload hook must project approval.requested from the
+// structured channelData.execApproval metadata so Flutter gets buttons.
+test('outbound pending approval payload projects approval.requested via session key binding', () => {
+  const harness = setup();
+  const pendingPayload = {
+    text: 'Approval required.\nRun: /approve approval-1 allow-once',
+    channelData: {
+      execApproval: {
+        approvalId: 'approval-1',
+        approvalSlug: 'approval-1',
+        approvalKind: 'exec',
+        agentId: 'supervisor',
+        allowedDecisions: ['allow-once', 'deny'],
+        sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1',
+      },
+    },
+  };
+
+  assert.equal(
+    handleOutboundApprovalPayload({ accountId: 'default', payload: pendingPayload }),
+    undefined,
+  );
+  assert.equal(harness.emitted.length, 1);
+  assert.equal(harness.emitted[0].kind, 'approval.requested');
+  assert.equal(harness.emitted[0].binding_id, 'binding-1');
+  assert.equal(harness.emitted[0].conversation_id, 'conversation-1');
+  assert.equal(harness.emitted[0].run_id, 'command-1');
+  assert.deepEqual(harness.emitted[0].payload.allowed_decisions, ['allow-once', 'deny']);
+  assert.equal(harness.emitted[0].payload.approval_kind, 'exec');
+  assert.equal(harness.emitted[0].payload.agent_id, 'supervisor');
+
+  // Idempotent: a second delivery of the same approval must not re-project.
+  handleOutboundApprovalPayload({ accountId: 'default', payload: pendingPayload });
+  assert.equal(harness.emitted.length, 1);
+
+  harness.unregisterBinding();
+  harness.unregisterAccount();
+});
+
+test('outbound pending approval without sessionKey falls back to single account binding', () => {
+  const harness = setup();
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: 'Approval required.',
+      channelData: {
+        execApproval: {
+          approvalId: 'approval-2',
+          approvalKind: 'exec',
+          allowedDecisions: ['deny'],
+        },
+      },
+    },
+  });
+  assert.equal(harness.emitted.length, 1);
+  assert.equal(harness.emitted[0].kind, 'approval.requested');
+  assert.equal(harness.emitted[0].payload.approval_id, 'approval-2');
+  assert.equal(harness.emitted[0].run_id, 'command-1');
+  harness.unregisterBinding();
+  harness.unregisterAccount();
+});
+
+test('outbound resolved approval payload projects approval.resolved with parsed decision', () => {
+  const harness = setup();
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: 'Approval required.',
+      channelData: {
+        execApproval: {
+          approvalId: 'approval-1',
+          approvalKind: 'exec',
+          allowedDecisions: ['allow-once', 'deny'],
+          sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1',
+        },
+      },
+    },
+  });
+  assert.equal(harness.emitted.length, 1);
+
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: '✅ Exec approval allowed once. Resolved by user:101. ID: approval-1',
+      channelData: {
+        execApproval: {
+          approvalId: 'approval-1',
+          approvalSlug: 'approval-1',
+          state: 'resolved',
+        },
+      },
+    },
+  });
+  assert.equal(harness.emitted.length, 2);
+  assert.equal(harness.emitted[1].kind, 'approval.resolved');
+  assert.equal(harness.emitted[1].payload.decision, 'allow-once');
+  assert.equal(harness.emitted[1].payload.resolved_by, 'user:101');
+  assert.equal(harness.emitted[1].payload.status, 'resolved');
+  harness.unregisterBinding();
+  harness.unregisterAccount();
+});
+
+test('outbound expiry notice projects approval.expired', () => {
+  const harness = setup();
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: 'Approval required.',
+      channelData: {
+        execApproval: {
+          approvalId: 'approval-1',
+          approvalKind: 'exec',
+          allowedDecisions: ['deny'],
+          sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1',
+        },
+      },
+    },
+  });
+  assert.equal(harness.emitted.length, 1);
+
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: { text: '⏱️ Exec approval expired. ID: approval-1' },
+  });
+  assert.equal(harness.emitted.length, 2);
+  assert.equal(harness.emitted[1].kind, 'approval.expired');
+  assert.equal(harness.emitted[1].payload.status, 'expired');
+
+  // Resolving after expiry finds no pending entry.
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: '✅ Exec approval allowed once. ID: approval-1',
+      channelData: { execApproval: { approvalId: 'approval-1', state: 'resolved' } },
+    },
+  });
+  assert.equal(harness.emitted.length, 2);
+  harness.unregisterBinding();
+  harness.unregisterAccount();
+});
+
+test('outbound projection skips non-approval payloads and unbound approvals', () => {
+  const harness = setup();
+  handleOutboundApprovalPayload({ accountId: 'default', payload: { text: 'hello' } });
+  harness.unregisterBinding();
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: 'Approval required.',
+      channelData: { execApproval: { approvalId: 'unknown-1', approvalKind: 'exec' } },
+    },
+  });
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: '✅ Exec approval allowed once. ID: never-pending',
+      channelData: { execApproval: { approvalId: 'never-pending', state: 'resolved' } },
+    },
+  });
+  assert.equal(harness.emitted.length, 0);
   harness.unregisterAccount();
 });
