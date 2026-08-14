@@ -13,6 +13,10 @@ import {
 } from './approval-lifecycle.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import {
+  registerActiveMemoryBinding,
+  registerMemoryLifecycleAccount,
+} from './memory-lifecycle.js';
+import {
   registerActiveSubagentParent,
   registerSubagentLifecycleAccount,
 } from './subagent-lifecycle.js';
@@ -1584,6 +1588,11 @@ export const xiotboxPlugin = {
         deviceId: finalCfg.DEVICE_ID,
         emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
       });
+      const unregisterMemoryAccount = registerMemoryLifecycleAccount({
+        accountId,
+        deviceId: finalCfg.DEVICE_ID,
+        emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
+      });
       const unregisterSubagentAccount = registerSubagentLifecycleAccount({
         deviceId: finalCfg.DEVICE_ID,
         emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
@@ -1605,6 +1614,7 @@ export const xiotboxPlugin = {
           }, log);
           log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
           unregisterApprovalAccount();
+          unregisterMemoryAccount();
           unregisterSubagentAccount();
           eventOutbox.stop();
           await client.disconnect();
@@ -2315,6 +2325,18 @@ export const xiotboxPlugin = {
                 traceId: lifecycleContext.traceId,
               })
             : () => {};
+          const unregisterMemoryBinding = conversationBinding && lifecycleContext
+            ? registerActiveMemoryBinding({
+                accountId,
+                deviceId: finalCfg.DEVICE_ID,
+                sessionKey,
+                bindingId: lifecycleContext.bindingId,
+                conversationId: lifecycleContext.conversationId,
+                agentId,
+                runId: lifecycleContext.runId,
+                traceId: lifecycleContext.traceId,
+              })
+            : () => {};
           try {
           if (createDispatcher && finalizeCtx && dispatchFromConfig) {
             streamBlocksViaReplyOptions = true;
@@ -2423,6 +2445,7 @@ export const xiotboxPlugin = {
           }
           } finally {
             unregisterApprovalBinding();
+            unregisterMemoryBinding();
             unregisterSubagentParent();
             unregisterToolRun();
           }
