@@ -32,6 +32,7 @@
     "clean": "rm -rf dist",
     "prepack": "npm run build",
     "release:check": "node scripts/release_check.mjs",
+    "contract:openclaw": "node scripts/check_openclaw_contract.mjs",
     "check:env": "node scripts/check_no_env_outside_runtime_config.mjs",
     "spike:entry": "node scripts/spike_openclaw_entry_3_1.mjs",
     "test": "node --test test/*.test.mjs"
@@ -42,7 +43,7 @@
     "dotenv": "^16.0.3"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.3.22"
+    "openclaw": ">=2026.7.1 <2026.9.0"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -80,7 +81,7 @@
       "npmSpec": "xiotbox",
       "localPath": "extensions/xiotbox",
       "defaultChoice": "local",
-      "minHostVersion": ">=2026.3.22"
+      "minHostVersion": ">=2026.7.1 <2026.9.0"
     },
     "channel": {
       "id": "xiotbox",

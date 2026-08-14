@@ -4,8 +4,10 @@ import path from 'node:path';
 import WSSClient from '../wss_client.js';
 import { getXiotboxRuntimeOrNull } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
+import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
+import { registerActiveToolRun } from './tool-lifecycle.js';
 import { clearConnectedAt, describeGatewayAccountState, getGatewayAccount, nextGatewayInstanceId, registerGatewayAccount, removeGatewayAccount, setConnectedAt, stopGatewayAccount, } from './gateway-state.js';
-import { buildConfig, buildSessionKey, CHANNEL_ID, getChannelConfig, listAccountIds, normalizeAccountId, normalizeAgentId, normalizeContextEpoch, normalizePositiveInt, normalizeStringValue, normalizeThreadId, resolveAccount, resolveAgentId, resolveDefaultAccountId, resolveEffectiveConfig, resolveThreadAgentId, } from './config.js';
+import { buildConfig, buildSessionKey, CHANNEL_ID, getChannelConfig, listAccountIds, normalizeAccountId, normalizeAgentId, normalizeContextEpoch, normalizePositiveInt, normalizeStringValue, normalizeThreadId, resolveAccount, resolveAgentId, resolveDefaultAccountId, resolveConversationBinding, resolveEffectiveConfig, resolveThreadAgentId, } from './config.js';
 const SESSION_STORE_CACHE_TTL_MS = 3000;
 const CONTEXT_EPOCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CONTEXT_EPOCH_CACHE_MAX = 2000;
@@ -1345,6 +1347,11 @@ export const xiotboxPlugin = {
             });
             const isCurrentInstance = () => getGatewayAccount(accountId)?.instanceId === instanceId;
             const client = new WSSClient(finalCfg);
+            const eventOutbox = new DurableEventOutbox({
+                filePath: resolveEventOutboxPath(finalCfg.DEVICE_ID),
+                send: (eventPayload) => client.sendMessage('V2.EVENT', eventPayload),
+                logger: log,
+            });
             let stopPromise = null;
             const stopCurrent = async (reason = 'stop') => {
                 if (stopPromise) {
@@ -1360,6 +1367,7 @@ export const xiotboxPlugin = {
                         detail: reason,
                     }, log);
                     log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
+                    eventOutbox.stop();
                     await client.disconnect();
                 })();
                 return stopPromise;
@@ -1420,6 +1428,22 @@ export const xiotboxPlugin = {
                 commandCache.set(cmdId, { ts: Date.now(), payload });
             };
             client.on('COMMAND', async (payload) => {
+                let lifecycleContext = null;
+                const emitLifecycleEvent = (kind, eventPayload, occurrenceId = kind) => {
+                    if (!lifecycleContext)
+                        return;
+                    eventOutbox.enqueue({
+                        event_id: `${lifecycleContext.runId}:${occurrenceId}`,
+                        binding_id: lifecycleContext.bindingId,
+                        conversation_id: lifecycleContext.conversationId,
+                        kind,
+                        actor: { type: 'agent', id: lifecycleContext.agentId },
+                        run_id: lifecycleContext.runId,
+                        visibility: 'user',
+                        trace_id: lifecycleContext.traceId,
+                        payload: eventPayload,
+                    });
+                };
                 try {
                     const cmdId = payload?.command_id;
                     if (!cmdId)
@@ -1476,6 +1500,22 @@ export const xiotboxPlugin = {
                     }
                     const contentType = incoming?.content_type || incoming?.contentType || 'text/markdown';
                     const threadId = normalizeThreadId(incoming?.thread_id || e2e.threadId);
+                    let conversationBinding = null;
+                    try {
+                        conversationBinding = resolveConversationBinding(incoming, finalCfg.DEVICE_ID);
+                    }
+                    catch (err) {
+                        const failPayload = {
+                            command_id: cmdId,
+                            status: 'failed',
+                            trace_id: traceId,
+                            error: err instanceof Error ? err.message : 'invalid conversation binding',
+                            result: {},
+                        };
+                        client.sendMessage('COMMAND_RESULT', failPayload);
+                        setCached(cmdId, failPayload);
+                        return;
+                    }
                     const contextEpochResolution = resolveInboundContextEpoch({
                         incoming,
                         deviceId: finalCfg.DEVICE_ID,
@@ -1484,7 +1524,7 @@ export const xiotboxPlugin = {
                         messageId: cmdId,
                         log,
                     });
-                    const contextEpoch = contextEpochResolution.epoch;
+                    const contextEpoch = conversationBinding?.contextEpoch ?? contextEpochResolution.epoch;
                     let text = '';
                     try {
                         text = e2e.decryptText(env, {
@@ -1587,8 +1627,23 @@ export const xiotboxPlugin = {
                     };
                     const senderId = payload?.from || 'xiotbox';
                     const fullConfig = resolveEffectiveConfig(ctx, cfg);
-                    const agentId = resolveThreadAgentId(fullConfig, threadId);
-                    const sessionKey = buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
+                    const agentId = conversationBinding?.agentId || resolveThreadAgentId(fullConfig, threadId);
+                    const sessionKey = conversationBinding?.sessionKey ||
+                        buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
+                    if (conversationBinding) {
+                        lifecycleContext = {
+                            bindingId: conversationBinding.bindingId,
+                            conversationId: conversationBinding.conversationId,
+                            agentId,
+                            runId: cmdId,
+                            traceId,
+                        };
+                        emitLifecycleEvent('run.started', {
+                            status: 'running',
+                            agent_profile_id: conversationBinding.agentProfileId,
+                            binding_version: conversationBinding.bindingVersion,
+                        });
+                    }
                     const counterKey = toolOnlyCounterKey(finalCfg.DEVICE_ID, threadId, senderId);
                     const forceExitKeyValue = forceExitKey(finalCfg.DEVICE_ID, threadId);
                     log?.debug?.(JSON.stringify({
@@ -1601,6 +1656,9 @@ export const xiotboxPlugin = {
                         context_epoch: contextEpoch,
                         context_epoch_source: contextEpochResolution.source,
                         session_key: sessionKey,
+                        conversation_id: conversationBinding?.conversationId || '',
+                        binding_id: conversationBinding?.bindingId || '',
+                        binding_version: conversationBinding?.bindingVersion || 0,
                     }));
                     // Periodic cleanup of stale counters
                     pruneToolOnlyCounters();
@@ -1640,6 +1698,10 @@ export const xiotboxPlugin = {
                             result: buildEncryptedResult('Exited control mode and switched back to chat mode. Continue with text-only conversation. If control is needed again, ask with a new operation request.', hardExitChunkSeq, resolveSessionUsageSnapshot(fullConfig, sessionKey)),
                         };
                         client.sendMessage('COMMAND_RESULT', successPayload);
+                        emitLifecycleEvent('run.completed', {
+                            status: 'completed',
+                            mode: 'text_only_exit',
+                        });
                         setCached(cmdId, successPayload);
                         return;
                     }
@@ -1679,6 +1741,8 @@ export const xiotboxPlugin = {
                         TraceId: traceId,
                         ChatType: 'direct',
                         ConversationLabel: `${finalCfg.DEVICE_ID}:${threadId}`,
+                        XiotBoxConversationId: conversationBinding?.conversationId,
+                        XiotBoxAgentProfileId: conversationBinding?.agentProfileId,
                         SenderId: senderId,
                         CommandAuthorized: true,
                         Provider: 'xiotbox',
@@ -1691,6 +1755,9 @@ export const xiotboxPlugin = {
                             to: finalCfg.DEVICE_ID,
                             threadId,
                             contextEpoch,
+                            conversationId: conversationBinding?.conversationId,
+                            bindingId: conversationBinding?.bindingId,
+                            bindingVersion: conversationBinding?.bindingVersion,
                         },
                     };
                     // OpenClaw dispatcher returns metadata and delivers actual reply payloads
@@ -1912,100 +1979,108 @@ export const xiotboxPlugin = {
                     const createDispatcher = replyApi?.createReplyDispatcherWithTyping;
                     const finalizeCtx = replyApi?.finalizeInboundContext;
                     const dispatchFromConfig = replyApi?.dispatchReplyFromConfig;
-                    if (createDispatcher && finalizeCtx && dispatchFromConfig) {
-                        streamBlocksViaReplyOptions = true;
-                        const { dispatcher, replyOptions, markDispatchIdle } = createDispatcher({
-                            deliver,
-                            onSkip: (_payload, info) => {
-                                skipEvents.push({
-                                    kind: String(info?.kind || 'unknown'),
-                                    reason: String(info?.reason || 'unknown'),
-                                });
-                            },
-                            onError: (err, info) => {
-                                log?.warn?.(`[XiotBox] OpenClaw deliver error kind=${info?.kind || 'unknown'} err=${err?.message || err}`);
-                            },
-                        });
-                        const runtimeReplyOptions = {
-                            ...replyOptions,
-                            disableBlockStreaming: typeof finalCfg.BLOCK_STREAMING === 'boolean'
-                                ? !finalCfg.BLOCK_STREAMING
-                                : undefined,
-                            onBlockReply: (payload) => {
-                                try {
-                                    if (!finalCfg.STREAMING)
-                                        return;
-                                    const blockText = typeof payload === 'string'
-                                        ? payload
-                                        : payload?.text || normalizeTextPayload(payload);
-                                    if (!blockText)
-                                        return;
-                                    log?.debug?.(JSON.stringify({
-                                        event: 'onBlockReply',
-                                        trace_id: traceId || '',
-                                        text_len: blockText.length,
-                                        text_preview: blockText.slice(0, 60),
-                                    }));
-                                    // Skip when deliver() already pushed the same block to avoid duplicates.
-                                    if (!blockParts.includes(blockText)) {
-                                        blockParts.push(blockText);
+                    const unregisterToolRun = conversationBinding
+                        ? registerActiveToolRun({ sessionKey, agentId, emit: emitLifecycleEvent })
+                        : () => { };
+                    try {
+                        if (createDispatcher && finalizeCtx && dispatchFromConfig) {
+                            streamBlocksViaReplyOptions = true;
+                            const { dispatcher, replyOptions, markDispatchIdle } = createDispatcher({
+                                deliver,
+                                onSkip: (_payload, info) => {
+                                    skipEvents.push({
+                                        kind: String(info?.kind || 'unknown'),
+                                        reason: String(info?.reason || 'unknown'),
+                                    });
+                                },
+                                onError: (err, info) => {
+                                    log?.warn?.(`[XiotBox] OpenClaw deliver error kind=${info?.kind || 'unknown'} err=${err?.message || err}`);
+                                },
+                            });
+                            const runtimeReplyOptions = {
+                                ...replyOptions,
+                                disableBlockStreaming: typeof finalCfg.BLOCK_STREAMING === 'boolean'
+                                    ? !finalCfg.BLOCK_STREAMING
+                                    : undefined,
+                                onBlockReply: (payload) => {
+                                    try {
+                                        if (!finalCfg.STREAMING)
+                                            return;
+                                        const blockText = typeof payload === 'string'
+                                            ? payload
+                                            : payload?.text || normalizeTextPayload(payload);
+                                        if (!blockText)
+                                            return;
+                                        log?.debug?.(JSON.stringify({
+                                            event: 'onBlockReply',
+                                            trace_id: traceId || '',
+                                            text_len: blockText.length,
+                                            text_preview: blockText.slice(0, 60),
+                                        }));
+                                        // Skip when deliver() already pushed the same block to avoid duplicates.
+                                        if (!blockParts.includes(blockText)) {
+                                            blockParts.push(blockText);
+                                        }
+                                        const blockSnapshotText = mergeRunningSnapshot(runningSnapshotText, blockParts.join('\n'));
+                                        emitTextSnapshot(blockSnapshotText);
                                     }
-                                    const blockSnapshotText = mergeRunningSnapshot(runningSnapshotText, blockParts.join('\n'));
-                                    emitTextSnapshot(blockSnapshotText);
-                                }
-                                catch (err) {
-                                    log?.error?.(`[XiotBox][${accountId}] onBlockReply error: ${err instanceof Error ? err.message : String(err)}`);
-                                }
-                            },
-                            onReasoningStream: (payload) => {
-                                try {
-                                    const reasoningText = typeof payload === 'string'
-                                        ? payload
-                                        : payload?.text || payload?.thinking || normalizeReasoningPayload(payload);
-                                    if (!reasoningText)
-                                        return;
-                                    thinkingSnapshotText = mergeRunningSnapshot(thinkingSnapshotText, reasoningText);
-                                }
-                                catch (err) {
-                                    log?.error?.(`[XiotBox][${accountId}] onReasoningStream error: ${err instanceof Error ? err.message : String(err)}`);
-                                }
-                            },
-                            onPartialReply: (payload) => {
-                                try {
-                                    const reasoningText = normalizeReasoningPayload(payload);
-                                    if (reasoningText) {
+                                    catch (err) {
+                                        log?.error?.(`[XiotBox][${accountId}] onBlockReply error: ${err instanceof Error ? err.message : String(err)}`);
+                                    }
+                                },
+                                onReasoningStream: (payload) => {
+                                    try {
+                                        const reasoningText = typeof payload === 'string'
+                                            ? payload
+                                            : payload?.text || payload?.thinking || normalizeReasoningPayload(payload);
+                                        if (!reasoningText)
+                                            return;
                                         thinkingSnapshotText = mergeRunningSnapshot(thinkingSnapshotText, reasoningText);
                                     }
-                                }
-                                catch (err) {
-                                    log?.error?.(`[XiotBox][${accountId}] onPartialReply error: ${err instanceof Error ? err.message : String(err)}`);
-                                }
-                            },
-                        };
-                        const finalized = finalizeCtx(inboundCtx);
-                        dispatchMeta = await dispatchFromConfig({
-                            ctx: finalized,
-                            cfg: effectiveConfig,
-                            dispatcher,
-                            replyResolver: null,
-                            replyOptions: runtimeReplyOptions,
-                        });
-                        await dispatcher.waitForIdle();
-                        markDispatchIdle();
+                                    catch (err) {
+                                        log?.error?.(`[XiotBox][${accountId}] onReasoningStream error: ${err instanceof Error ? err.message : String(err)}`);
+                                    }
+                                },
+                                onPartialReply: (payload) => {
+                                    try {
+                                        const reasoningText = normalizeReasoningPayload(payload);
+                                        if (reasoningText) {
+                                            thinkingSnapshotText = mergeRunningSnapshot(thinkingSnapshotText, reasoningText);
+                                        }
+                                    }
+                                    catch (err) {
+                                        log?.error?.(`[XiotBox][${accountId}] onPartialReply error: ${err instanceof Error ? err.message : String(err)}`);
+                                    }
+                                },
+                            };
+                            const finalized = finalizeCtx(inboundCtx);
+                            dispatchMeta = await dispatchFromConfig({
+                                ctx: finalized,
+                                cfg: effectiveConfig,
+                                dispatcher,
+                                replyResolver: null,
+                                replyOptions: runtimeReplyOptions,
+                            });
+                            await dispatcher.waitForIdle();
+                            markDispatchIdle();
+                        }
+                        else {
+                            // Fallback for older runtimes.
+                            const { queuedFinal, counts } = await dispatchReply({
+                                ctx: inboundCtx,
+                                cfg: effectiveConfig,
+                                replyResolver: null,
+                                dispatcherOptions: {
+                                    deliver,
+                                },
+                            });
+                            dispatchMeta = { queuedFinal, counts };
+                            // Let queued microtasks flush `deliver()` at least once before we finalize.
+                            await Promise.resolve();
+                        }
                     }
-                    else {
-                        // Fallback for older runtimes.
-                        const { queuedFinal, counts } = await dispatchReply({
-                            ctx: inboundCtx,
-                            cfg: effectiveConfig,
-                            replyResolver: null,
-                            dispatcherOptions: {
-                                deliver,
-                            },
-                        });
-                        dispatchMeta = { queuedFinal, counts };
-                        // Let queued microtasks flush `deliver()` at least once before we finalize.
-                        await Promise.resolve();
+                    finally {
+                        unregisterToolRun();
                     }
                     // Prefer finalText, then blocks (joined with newline), then lastText
                     const blocksText = blockParts.join('\n');
@@ -2164,6 +2239,10 @@ export const xiotboxPlugin = {
                         }),
                     };
                     client.sendMessage('COMMAND_RESULT', successPayload);
+                    emitLifecycleEvent('run.completed', {
+                        status: 'completed',
+                        session_usage: sessionUsageSnapshot || undefined,
+                    });
                     setCached(cmdId, successPayload);
                 }
                 catch (err) {
@@ -2185,6 +2264,10 @@ export const xiotboxPlugin = {
                         result: {},
                     };
                     client.sendMessage('COMMAND_RESULT', failPayload);
+                    emitLifecycleEvent('run.failed', {
+                        status: 'failed',
+                        error_code: 'execution_failed',
+                    });
                     setCached(cmdId, failPayload);
                 }
             });
@@ -2223,6 +2306,10 @@ export const xiotboxPlugin = {
                 e2e.refreshPeerKey().catch((err) => {
                     log?.warn?.(`[XiotBox][${accountId}] E2E peer key refresh failed: ${err?.message || err}`);
                 });
+                eventOutbox.flushDue(true);
+            });
+            client.on('V2.EVENT_ACK', (ack) => {
+                eventOutbox.acknowledge(ack || {});
             });
             client.on('disconnected', () => {
                 log?.warn?.(`[XiotBox][${accountId}] Disconnected from Gateway`);
@@ -2249,6 +2336,7 @@ export const xiotboxPlugin = {
             client.on('auth_required', (payload) => {
                 log?.error?.(`[XiotBox][${accountId}] Gateway auth required (remote channel paused): ${payload?.message || payload?.code || 'REAUTH_REQUIRED'}`);
             });
+            eventOutbox.start();
             if (!isCurrentInstance()) {
                 await client.disconnect();
                 throw new Error(`gateway_instance_superseded_before_connect:${instanceId}`);

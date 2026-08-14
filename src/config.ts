@@ -65,6 +65,66 @@ export function buildSessionKey(
   return contextEpoch > 0 ? `${base}:ctx${contextEpoch}` : base;
 }
 
+export type ConversationBindingSnapshot = {
+  bindingId: string;
+  bindingVersion: number;
+  conversationId: string;
+  agentProfileId: string;
+  agentId: string;
+  sessionKey: string;
+  contextEpoch: number;
+};
+
+export function resolveConversationBinding(
+  incoming: any,
+  deviceId: string,
+): ConversationBindingSnapshot | null {
+  const raw = incoming?.conversation_binding;
+  if (raw == null) return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('invalid conversation binding');
+  }
+  const bindingId = normalizeStringValue(raw.binding_id);
+  const conversationId = normalizeStringValue(raw.conversation_id);
+  const agentProfileId = normalizeStringValue(raw.agent_profile_id);
+  const rawAgentId = normalizeStringValue(raw.agent_id);
+  const sessionKey = normalizeStringValue(raw.session_key);
+  const bindingVersion = Number(raw.binding_version);
+  const contextEpoch = Number(raw.context_epoch);
+  if (
+    !bindingId ||
+    !conversationId ||
+    !agentProfileId ||
+    !rawAgentId ||
+    !sessionKey ||
+    !Number.isSafeInteger(bindingVersion) ||
+    bindingVersion < 1 ||
+    !Number.isSafeInteger(contextEpoch) ||
+    contextEpoch < 0
+  ) {
+    throw new Error('incomplete conversation binding');
+  }
+  const agentId = normalizeAgentId(rawAgentId);
+  const expectedSessionKey = buildSessionKey(
+    agentId,
+    deviceId,
+    conversationId,
+    contextEpoch,
+  );
+  if (sessionKey !== expectedSessionKey) {
+    throw new Error('conversation binding session key mismatch');
+  }
+  return {
+    bindingId,
+    bindingVersion,
+    conversationId,
+    agentProfileId,
+    agentId,
+    sessionKey,
+    contextEpoch,
+  };
+}
+
 export function normalizePositiveInt(value: any): number | undefined {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return undefined;

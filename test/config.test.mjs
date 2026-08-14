@@ -12,6 +12,7 @@ import {
   normalizeThreadId,
   resolveAccount,
   resolveDefaultAccountId,
+  resolveConversationBinding,
   resolveEffectiveConfig,
   resolveThreadAgentId,
 } from '../dist/src/config.js';
@@ -57,6 +58,39 @@ test('normalize helpers handle defaults and safe agent ids', () => {
 test('buildSessionKey includes context epoch only when positive', () => {
   assert.equal(buildSessionKey('Main Agent!', 'dev1', 'thread1'), 'agent:main-agent:xiotbox:dev1:thread1');
   assert.equal(buildSessionKey('main', 'dev1', 'thread1', 2), 'agent:main:xiotbox:dev1:thread1:ctx2');
+});
+
+test('resolveConversationBinding accepts only a self-consistent gateway snapshot', () => {
+  const raw = {
+    conversation_binding: {
+      binding_id: 'bind-1',
+      binding_version: 2,
+      conversation_id: 'conv-1',
+      agent_profile_id: 'profile-1',
+      agent_id: 'Engineering Supervisor',
+      session_key: 'agent:engineering-supervisor:xiotbox:device-1:conv-1:ctx3',
+      context_epoch: 3,
+    },
+  };
+  assert.deepEqual(resolveConversationBinding(raw, 'device-1'), {
+    bindingId: 'bind-1',
+    bindingVersion: 2,
+    conversationId: 'conv-1',
+    agentProfileId: 'profile-1',
+    agentId: 'engineering-supervisor',
+    sessionKey: 'agent:engineering-supervisor:xiotbox:device-1:conv-1:ctx3',
+    contextEpoch: 3,
+  });
+  assert.equal(resolveConversationBinding({}, 'device-1'), null);
+  assert.throws(
+    () => resolveConversationBinding({
+      conversation_binding: {
+        ...raw.conversation_binding,
+        session_key: 'agent:attacker:xiotbox:device-1:conv-1:ctx3',
+      },
+    }, 'device-1'),
+    /session key mismatch/,
+  );
 });
 
 test('resolveThreadAgentId uses thread map before defaults', () => {

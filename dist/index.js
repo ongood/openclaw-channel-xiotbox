@@ -1,6 +1,7 @@
 import { xiotboxPlugin } from './src/channel.js';
 import { createXiotboxLocalControlTool } from './src/local-control-tool.js';
 import { setXiotboxRuntime } from './src/runtime.js';
+import { handleAfterToolCall, handleBeforeToolCall } from './src/tool-lifecycle.js';
 import { createXiotboxControlTool } from './src/xiotbox-control-tool.js';
 function registerXiotboxTools(api) {
     api.registerTool(createXiotboxLocalControlTool({
@@ -23,6 +24,8 @@ export default {
         if (api.registrationMode !== 'full') {
             return;
         }
+        api.on('before_tool_call', handleBeforeToolCall);
+        api.on('after_tool_call', handleAfterToolCall);
         registerXiotboxTools(api);
     },
 };

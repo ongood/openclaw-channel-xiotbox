@@ -26,7 +26,7 @@ This repository is being prepared for future public distribution, but the curren
 
 ## Compatibility
 
-- OpenClaw host: `>=2026.3.22`
+- OpenClaw host package: `>=2026.7.1 <2026.9.0` (validated refs: production `v2026.7.1-2`, target `245c14f30fa / 2026.8.1`)
 - Node.js: `>=18` for source checkout / bridge-mode execution
 - Current repository layout is still compatible with:
   - `openclaw plugins install <local-path>`

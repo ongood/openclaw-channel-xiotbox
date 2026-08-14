@@ -5,6 +5,8 @@ import WSSClient from '../wss_client.js';
 import { getXiotboxRuntimeOrNull } from './runtime.js';
 import type { RuntimeReplySurface } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
+import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
+import { registerActiveToolRun } from './tool-lifecycle.js';
 import {
   clearConnectedAt,
   describeGatewayAccountState,
@@ -31,6 +33,7 @@ import {
   resolveAccount,
   resolveAgentId,
   resolveDefaultAccountId,
+  resolveConversationBinding,
   resolveEffectiveConfig,
   resolveThreadAgentId,
 } from './config.js';
@@ -1560,6 +1563,11 @@ export const xiotboxPlugin = {
       const isCurrentInstance = () => getGatewayAccount(accountId)?.instanceId === instanceId;
 
       const client = new WSSClient(finalCfg);
+      const eventOutbox = new DurableEventOutbox({
+        filePath: resolveEventOutboxPath(finalCfg.DEVICE_ID),
+        send: (eventPayload) => client.sendMessage('V2.EVENT', eventPayload),
+        logger: log,
+      });
       let stopPromise: Promise<void> | null = null;
       const stopCurrent = async (reason = 'stop') => {
         if (stopPromise) {
@@ -1575,6 +1583,7 @@ export const xiotboxPlugin = {
             detail: reason,
           }, log);
           log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
+          eventOutbox.stop();
           await client.disconnect();
         })();
         return stopPromise;
@@ -1641,6 +1650,31 @@ export const xiotboxPlugin = {
       };
 
       client.on('COMMAND', async (payload: any) => {
+        let lifecycleContext: {
+          bindingId: string;
+          conversationId: string;
+          agentId: string;
+          runId: string;
+          traceId: string | null;
+        } | null = null;
+        const emitLifecycleEvent = (
+          kind: string,
+          eventPayload: Record<string, unknown>,
+          occurrenceId = kind,
+        ) => {
+          if (!lifecycleContext) return;
+          eventOutbox.enqueue({
+            event_id: `${lifecycleContext.runId}:${occurrenceId}`,
+            binding_id: lifecycleContext.bindingId,
+            conversation_id: lifecycleContext.conversationId,
+            kind,
+            actor: { type: 'agent', id: lifecycleContext.agentId },
+            run_id: lifecycleContext.runId,
+            visibility: 'user',
+            trace_id: lifecycleContext.traceId,
+            payload: eventPayload,
+          });
+        };
         try {
           const cmdId = payload?.command_id;
           if (!cmdId) return;
@@ -1701,6 +1735,21 @@ export const xiotboxPlugin = {
 
           const contentType = incoming?.content_type || incoming?.contentType || 'text/markdown';
           const threadId = normalizeThreadId(incoming?.thread_id || e2e.threadId);
+          let conversationBinding = null;
+          try {
+            conversationBinding = resolveConversationBinding(incoming, finalCfg.DEVICE_ID);
+          } catch (err) {
+            const failPayload = {
+              command_id: cmdId,
+              status: 'failed',
+              trace_id: traceId,
+              error: err instanceof Error ? err.message : 'invalid conversation binding',
+              result: {},
+            };
+            client.sendMessage('COMMAND_RESULT', failPayload);
+            setCached(cmdId, failPayload);
+            return;
+          }
           const contextEpochResolution = resolveInboundContextEpoch({
             incoming,
             deviceId: finalCfg.DEVICE_ID,
@@ -1709,7 +1758,7 @@ export const xiotboxPlugin = {
             messageId: cmdId,
             log,
           });
-          const contextEpoch = contextEpochResolution.epoch;
+          const contextEpoch = conversationBinding?.contextEpoch ?? contextEpochResolution.epoch;
           let text = '';
           try {
             text = e2e.decryptText(env, {
@@ -1828,8 +1877,23 @@ export const xiotboxPlugin = {
 
           const senderId = payload?.from || 'xiotbox';
           const fullConfig = resolveEffectiveConfig(ctx, cfg);
-          const agentId = resolveThreadAgentId(fullConfig, threadId);
-          const sessionKey = buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
+          const agentId = conversationBinding?.agentId || resolveThreadAgentId(fullConfig, threadId);
+          const sessionKey = conversationBinding?.sessionKey ||
+            buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
+          if (conversationBinding) {
+            lifecycleContext = {
+              bindingId: conversationBinding.bindingId,
+              conversationId: conversationBinding.conversationId,
+              agentId,
+              runId: cmdId,
+              traceId,
+            };
+            emitLifecycleEvent('run.started', {
+              status: 'running',
+              agent_profile_id: conversationBinding.agentProfileId,
+              binding_version: conversationBinding.bindingVersion,
+            });
+          }
           const counterKey = toolOnlyCounterKey(
             finalCfg.DEVICE_ID,
             threadId,
@@ -1847,6 +1911,9 @@ export const xiotboxPlugin = {
             context_epoch: contextEpoch,
             context_epoch_source: contextEpochResolution.source,
             session_key: sessionKey,
+            conversation_id: conversationBinding?.conversationId || '',
+            binding_id: conversationBinding?.bindingId || '',
+            binding_version: conversationBinding?.bindingVersion || 0,
           }));
 
           // Periodic cleanup of stale counters
@@ -1893,6 +1960,10 @@ export const xiotboxPlugin = {
               ),
             };
             client.sendMessage('COMMAND_RESULT', successPayload);
+            emitLifecycleEvent('run.completed', {
+              status: 'completed',
+              mode: 'text_only_exit',
+            });
             setCached(cmdId, successPayload);
             return;
           }
@@ -1933,6 +2004,8 @@ export const xiotboxPlugin = {
             TraceId: traceId,
             ChatType: 'direct',
             ConversationLabel: `${finalCfg.DEVICE_ID}:${threadId}`,
+            XiotBoxConversationId: conversationBinding?.conversationId,
+            XiotBoxAgentProfileId: conversationBinding?.agentProfileId,
             SenderId: senderId,
             CommandAuthorized: true,
             Provider: 'xiotbox',
@@ -1945,6 +2018,9 @@ export const xiotboxPlugin = {
               to: finalCfg.DEVICE_ID,
               threadId,
               contextEpoch,
+              conversationId: conversationBinding?.conversationId,
+              bindingId: conversationBinding?.bindingId,
+              bindingVersion: conversationBinding?.bindingVersion,
             },
           };
 
@@ -2190,6 +2266,10 @@ export const xiotboxPlugin = {
           const finalizeCtx = replyApi?.finalizeInboundContext;
           const dispatchFromConfig = replyApi?.dispatchReplyFromConfig;
 
+          const unregisterToolRun = conversationBinding
+            ? registerActiveToolRun({ sessionKey, agentId, emit: emitLifecycleEvent })
+            : () => {};
+          try {
           if (createDispatcher && finalizeCtx && dispatchFromConfig) {
             streamBlocksViaReplyOptions = true;
             const { dispatcher, replyOptions, markDispatchIdle } = createDispatcher({
@@ -2294,6 +2374,9 @@ export const xiotboxPlugin = {
             dispatchMeta = { queuedFinal, counts };
             // Let queued microtasks flush `deliver()` at least once before we finalize.
             await Promise.resolve();
+          }
+          } finally {
+            unregisterToolRun();
           }
 
           // Prefer finalText, then blocks (joined with newline), then lastText
@@ -2463,6 +2546,10 @@ export const xiotboxPlugin = {
             }),
           };
           client.sendMessage('COMMAND_RESULT', successPayload);
+          emitLifecycleEvent('run.completed', {
+            status: 'completed',
+            session_usage: sessionUsageSnapshot || undefined,
+          });
           setCached(cmdId, successPayload);
         } catch (err: any) {
           log?.error?.(JSON.stringify({
@@ -2482,6 +2569,10 @@ export const xiotboxPlugin = {
             result: {},
           };
           client.sendMessage('COMMAND_RESULT', failPayload);
+          emitLifecycleEvent('run.failed', {
+            status: 'failed',
+            error_code: 'execution_failed',
+          });
           setCached(cmdId, failPayload);
         }
       });
@@ -2520,6 +2611,11 @@ export const xiotboxPlugin = {
         e2e.refreshPeerKey().catch((err: any) => {
           log?.warn?.(`[XiotBox][${accountId}] E2E peer key refresh failed: ${err?.message || err}`);
         });
+        eventOutbox.flushDue(true);
+      });
+
+      client.on('V2.EVENT_ACK', (ack: any) => {
+        eventOutbox.acknowledge(ack || {});
       });
 
       client.on('disconnected', () => {
@@ -2551,6 +2647,8 @@ export const xiotboxPlugin = {
           `[XiotBox][${accountId}] Gateway auth required (remote channel paused): ${payload?.message || payload?.code || 'REAUTH_REQUIRED'}`,
         );
       });
+
+      eventOutbox.start();
 
       if (!isCurrentInstance()) {
         await client.disconnect();

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "baselines": [
+    {
+      "name": "production",
+      "ref": "v2026.7.1-2",
+      "version": "2026.7.1",
+      "deploymentLabel": "v2026.7.1-2"
+    },
+    {
+      "name": "upgrade-target",
+      "ref": "245c14f30fa",
+      "version": "2026.8.1"
+    }
+  ],
+  "requiredFiles": [
+    "src/plugin-sdk/plugin-entry.ts",
+    "src/plugin-sdk/thread-bindings-runtime.ts",
+    "src/channels/plugins/types.adapters.ts"
+  ],
+  "requiredSymbols": [
+    "registerChannel",
+    "registerTool",
+    "before_tool_call",
+    "after_tool_call",
+    "dispatchReplyWithBufferedBlockDispatcher",
+    "createReplyDispatcherWithTyping",
+    "finalizeInboundContext",
+    "dispatchReplyFromConfig"
+  ],
+  "forbiddenPluginImports": [
+    "openclaw/src/",
+    "openclaw/plugin-sdk/thread-bindings-runtime",
+    "openclaw/plugin-sdk/conversation-runtime"
+  ]
+}
