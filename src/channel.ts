@@ -2288,10 +2288,15 @@ export const xiotboxPlugin = {
 
             // XiotBox's inbound dispatcher delivers agent replies directly to
             // COMMAND_RESULT, bypassing the standard channel outbound adapter.
-            // Observe approval payloads here while the conversation binding is
-            // still active; the outbound hook remains as an idempotent fallback
-            // for delayed/core-initiated deliveries.
+            // Observe approval and ask_user payloads here while the conversation
+            // binding is still active; the outbound hook remains as an
+            // idempotent fallback for delayed/core-initiated deliveries.
             handleOutboundApprovalPayload({
+              accountId,
+              payload: outPayload,
+              conversationId: conversationBinding?.conversationId || threadId,
+            });
+            handleOutboundAskUserPayload({
               accountId,
               payload: outPayload,
               conversationId: conversationBinding?.conversationId || threadId,
@@ -2492,6 +2497,12 @@ export const xiotboxPlugin = {
                   : undefined,
               onBlockReply: (payload: any) => {
                 try {
+                  // ask_user 问题走 block-reply 面，先投影（与 STREAMING 无关）。
+                  handleOutboundAskUserPayload({
+                    accountId,
+                    payload,
+                    conversationId: conversationBinding?.conversationId || threadId,
+                  });
                   if (!finalCfg.STREAMING) return;
                   const blockText =
                     typeof payload === 'string'
