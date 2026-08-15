@@ -25,34 +25,54 @@ test('projects redacted tool lifecycle for an authorized active session', () => 
     toolName: 'exec',
   };
 
-  handleBeforeToolCall({ toolName: 'exec', toolCallId: 'call-1', params: { command: 'secret' } }, ctx);
+  handleBeforeToolCall({
+    toolName: 'exec',
+    toolCallId: 'call-1',
+    params: { command: 'echo hello', api_key: 'sk-SECRET_TOKEN_1234567890' },
+  }, ctx);
   handleAfterToolCall({
     toolName: 'exec',
     toolCallId: 'call-1',
-    result: { stdout: 'secret result' },
+    result: { stdout: 'hello\n', exitCode: 0 },
     durationMs: 42,
   }, ctx);
 
-  assert.deepEqual(emitted, [
-    {
-      kind: 'tool.call', occurrenceId: 'tool:call-1:call',
-      payload: {
-        tool_name: 'exec', tool_call_id: 'call-1', runtime_run_id: 'openclaw-run-1', status: 'running',
-      },
-    },
-    {
-      kind: 'tool.result', occurrenceId: 'tool:call-1:result',
-      payload: {
-        tool_name: 'exec', tool_call_id: 'call-1', runtime_run_id: 'openclaw-run-1',
-        status: 'completed', duration_ms: 42,
-      },
-    },
-  ]);
-  assert.equal(JSON.stringify(emitted).includes('secret'), false);
+  assert.equal(emitted.length, 2);
+  assert.equal(emitted[0].kind, 'tool.call');
+  assert.equal(emitted[0].payload.tool_name, 'exec');
+  assert.equal(emitted[0].payload.status, 'running');
+  // Command is projectable; the API key value must be redacted.
+  assert.ok(emitted[0].payload.params.includes('echo hello'));
+  assert.equal(emitted[0].payload.params.includes('sk-SECRET_TOKEN'), false);
+  assert.equal(emitted[0].payload.params.includes('sk-SECRET_TOKEN_1234567890'), false);
+
+  assert.equal(emitted[1].kind, 'tool.result');
+  assert.equal(emitted[1].payload.status, 'completed');
+  assert.equal(emitted[1].payload.duration_ms, 42);
+  assert.ok(emitted[1].payload.result.includes('hello'));
+  assert.equal(JSON.stringify(emitted).includes('sk-SECRET_TOKEN'), false);
 
   unregister();
   handleBeforeToolCall({ toolName: 'exec', toolCallId: 'call-2' }, ctx);
   assert.equal(emitted.length, 2);
+});
+
+test('redacts secret-form values inside strings and key=value credentials', () => {
+  const emitted = [];
+  registerActiveToolRun({
+    sessionKey: 'session-1',
+    agentId: 'agent-1',
+    emit: (kind, payload) => emitted.push({ kind, payload }),
+  });
+  handleBeforeToolCall({
+    toolName: 'exec',
+    toolCallId: 'call-a',
+    params: { command: 'curl -H "Authorization: Bearer abcdefgh12345678" https://x' },
+  }, { sessionKey: 'session-1', agentId: 'agent-1' });
+
+  const text = JSON.stringify(emitted);
+  assert.equal(text.includes('abcdefgh12345678'), false);
+  assert.ok(emitted[0].payload.params.includes('[redacted]'));
 });
 
 test('fails closed for missing correlation or ambiguous active sessions', () => {
@@ -87,7 +107,7 @@ test('fails closed for missing correlation or ambiguous active sessions', () => 
   unregisterFirst();
 });
 
-test('reports failure without persisting the tool error text', () => {
+test('reports failure without persisting the tool error secret', () => {
   const emitted = [];
   registerActiveToolRun({
     sessionKey: 'session-1',
@@ -101,4 +121,5 @@ test('reports failure without persisting the tool error text', () => {
   assert.equal(emitted[0].kind, 'tool.result');
   assert.equal(emitted[0].payload.status, 'failed');
   assert.equal(JSON.stringify(emitted).includes('top-secret'), false);
+  assert.equal(emitted[0].payload.error.includes('[redacted]'), true);
 });
