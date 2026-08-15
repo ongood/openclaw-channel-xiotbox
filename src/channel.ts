@@ -28,7 +28,7 @@ import {
   registerActiveSubagentParent,
   registerSubagentLifecycleAccount,
 } from './subagent-lifecycle.js';
-import { registerActiveToolRun } from './tool-lifecycle.js';
+import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import {
   clearConnectedAt,
@@ -2019,6 +2019,11 @@ export const xiotboxPlugin = {
           const agentId = conversationBinding?.agentId || resolveThreadAgentId(fullConfig, threadId);
           const sessionKey = conversationBinding?.sessionKey ||
             buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
+          // 客户端随消息带上 permission（full | readonly），驱动本会话的工具策略。
+          const inboundPermission = incoming?.metadata?.permission;
+          if (inboundPermission === 'readonly' || inboundPermission === 'full') {
+            setSessionPermission(sessionKey, inboundPermission);
+          }
           if (conversationBinding) {
             lifecycleContext = {
               bindingId: conversationBinding.bindingId,

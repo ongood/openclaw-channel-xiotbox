@@ -6,9 +6,14 @@ import {
   handleBeforeToolCall,
   registerActiveToolRun,
   resetActiveToolRunsForTest,
+  resetSessionPermissionsForTest,
+  setSessionPermission,
 } from '../dist/src/tool-lifecycle.js';
 
-test.beforeEach(() => resetActiveToolRunsForTest());
+test.beforeEach(() => {
+  resetActiveToolRunsForTest();
+  resetSessionPermissionsForTest();
+});
 
 test('projects redacted tool lifecycle for an authorized active session', () => {
   const emitted = [];
@@ -122,4 +127,31 @@ test('reports failure without persisting the tool error secret', () => {
   assert.equal(emitted[0].payload.status, 'failed');
   assert.equal(JSON.stringify(emitted).includes('top-secret'), false);
   assert.equal(emitted[0].payload.error.includes('[redacted]'), true);
+});
+
+test('readonly session blocks write/exec tools but allows reads', () => {
+  const emitted = [];
+  registerActiveToolRun({
+    sessionKey: 'session-1',
+    agentId: 'agent-1',
+    emit: (kind, payload) => emitted.push({ kind, payload }),
+  });
+  setSessionPermission('session-1', 'readonly');
+
+  const blocked = handleBeforeToolCall(
+    { toolName: 'exec', toolCallId: 'call-1' },
+    { sessionKey: 'session-1', agentId: 'agent-1' },
+  );
+  assert.equal(blocked?.block, true);
+  assert.ok(blocked?.blockReason?.includes('readonly'));
+  assert.equal(emitted.length, 0);
+
+  const allowed = handleBeforeToolCall(
+    { toolName: 'read', toolCallId: 'call-2' },
+    { sessionKey: 'session-1', agentId: 'agent-1' },
+  );
+  assert.equal(allowed, undefined);
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].kind, 'tool.call');
+  assert.equal(emitted[0].payload.tool_name, 'read');
 });

@@ -9,7 +9,7 @@
 - `TEST_PLAN.md`：质量和回归计划。
 - `contracts/CHAT_MEDIA_CONTRACT.md`：聊天媒体契约。
 - `digital-employee-permissions.md`：数字员工权限说明。
-- `openclaw-entry-spike-3.1.md`：已完成的 3.1 入口调研与决策记录，不是当前 4.0.10 架构规范。
+- `openclaw-entry-spike-3.1.md`：已完成的 3.1 入口调研与决策记录，不是当前 4.0.11 架构规范。
 - `plugins-git-install-termux.md`：Termux 安装说明。
 
 ## 发布相关

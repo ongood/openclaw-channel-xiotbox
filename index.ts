@@ -16,7 +16,7 @@ type XiotboxPluginApi = {
   registrationMode?: string;
   registerChannel: (params: { plugin: unknown }) => void;
   registerTool: (tool: unknown, options?: { optional?: boolean }) => void;
-  on: (hookName: string, handler: (event: any, ctx: any) => void | Promise<void>) => void;
+  on: (hookName: string, handler: (event: any, ctx: any) => any) => void;
   registerAgentEventSubscription?: (subscription: {
     id: string;
     description?: string;

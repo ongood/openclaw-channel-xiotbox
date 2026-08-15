@@ -31,6 +31,34 @@ type RegisterActiveToolRunOptions = {
 
 const activeRuns = new Map<string, Map<symbol, ActiveToolRun>>();
 
+// ── Readonly permission ─────────────────────────────────────────────
+// The Flutter client can send a per-session permission (full | readonly).
+// Readonly blocks write/exec tools via the before_tool_call hook result.
+const sessionPermissions = new Map<string, 'full' | 'readonly'>();
+
+const WRITE_TOOLS = new Set([
+  'exec', 'bash', 'shell', 'terminal', 'process', 'command',
+  'write', 'edit', 'patch', 'apply', 'code_execution',
+]);
+
+function bareToolName(toolName: string): string {
+  return toolName.split('__').pop() || toolName;
+}
+
+function isWriteTool(toolName: string): boolean {
+  return WRITE_TOOLS.has(bareToolName(toolName));
+}
+
+export function setSessionPermission(sessionKey: string, permission: 'full' | 'readonly'): void {
+  const key = normalized(sessionKey);
+  if (!key) return;
+  sessionPermissions.set(key, permission);
+}
+
+export function resetSessionPermissionsForTest(): void {
+  sessionPermissions.clear();
+}
+
 // ── Redaction bounds ────────────────────────────────────────────────
 // Tool params/result are projected to the chat UI, so they must never carry
 // secrets. Redaction is key-based (sensitive field names), value-based (known
@@ -162,9 +190,19 @@ export function registerActiveToolRun(options: RegisterActiveToolRunOptions): ()
   };
 }
 
-export function handleBeforeToolCall(event: ToolHookEvent, ctx: ToolHookContext): void {
+export function handleBeforeToolCall(
+  event: ToolHookEvent,
+  ctx: ToolHookContext,
+): { block?: boolean; blockReason?: string } | void {
   const resolved = resolveToolCall(event, ctx);
   if (!resolved) return;
+  // readonly 会话：写/执行类工具直接 block，不投影运行中。
+  const sessionKey = normalized(ctx?.sessionKey);
+  if (sessionKey && sessionPermissions.get(sessionKey) === 'readonly') {
+    if (isWriteTool(resolved.toolName)) {
+      return { block: true, blockReason: 'readonly mode: write/exec tools are disabled' };
+    }
+  }
   const params = projectText(event?.params, MAX_PARAMS_CHARS);
   const payload: Record<string, unknown> = {
     tool_name: resolved.toolName,

@@ -10,7 +10,7 @@ import { handleAgentProfileSync } from './agent-profile-sync.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import { registerActiveMemoryBinding, registerMemoryLifecycleAccount, } from './memory-lifecycle.js';
 import { registerActiveSubagentParent, registerSubagentLifecycleAccount, } from './subagent-lifecycle.js';
-import { registerActiveToolRun } from './tool-lifecycle.js';
+import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import { clearConnectedAt, describeGatewayAccountState, getGatewayAccount, nextGatewayInstanceId, registerGatewayAccount, removeGatewayAccount, setConnectedAt, stopGatewayAccount, } from './gateway-state.js';
 import { buildConfig, buildSessionKey, CHANNEL_ID, getChannelConfig, listAccountIds, normalizeAccountId, normalizeAgentId, normalizeContextEpoch, normalizePositiveInt, normalizeStringValue, normalizeThreadId, resolveAccount, resolveAgentId, resolveDefaultAccountId, resolveConversationBinding, resolveEffectiveConfig, resolveThreadAgentId, } from './config.js';
@@ -1747,6 +1747,11 @@ export const xiotboxPlugin = {
                     const agentId = conversationBinding?.agentId || resolveThreadAgentId(fullConfig, threadId);
                     const sessionKey = conversationBinding?.sessionKey ||
                         buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
+                    // 客户端随消息带上 permission（full | readonly），驱动本会话的工具策略。
+                    const inboundPermission = incoming?.metadata?.permission;
+                    if (inboundPermission === 'readonly' || inboundPermission === 'full') {
+                        setSessionPermission(sessionKey, inboundPermission);
+                    }
                     if (conversationBinding) {
                         lifecycleContext = {
                             bindingId: conversationBinding.bindingId,
