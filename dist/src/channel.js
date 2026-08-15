@@ -5,6 +5,7 @@ import WSSClient from '../wss_client.js';
 import { getXiotboxRuntimeOrNull } from './runtime.js';
 import { OpenClawE2E } from './e2e.js';
 import { handleGatewayApprovalResolve, handleOutboundApprovalPayload, registerActiveApprovalBinding, registerApprovalLifecycleAccount, xiotboxApprovalCapability, } from './approval-lifecycle.js';
+import { handleGatewayAskUserResolve, handleOutboundAskUserPayload, registerActiveAskUserBinding, registerAskUserLifecycleAccount, } from './ask-user-lifecycle.js';
 import { handleAgentProfileSync } from './agent-profile-sync.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import { registerActiveMemoryBinding, registerMemoryLifecycleAccount, } from './memory-lifecycle.js';
@@ -1324,6 +1325,11 @@ export const xiotboxPlugin = {
                 payload: params?.payload,
                 conversationId: params?.target?.threadId,
             });
+            handleOutboundAskUserPayload({
+                accountId: params?.target?.accountId || 'default',
+                payload: params?.payload,
+                conversationId: params?.target?.threadId,
+            });
         },
     },
     config: {
@@ -1396,6 +1402,11 @@ export const xiotboxPlugin = {
                 deviceId: finalCfg.DEVICE_ID,
                 emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
             });
+            const unregisterAskUserAccount = registerAskUserLifecycleAccount({
+                accountId,
+                deviceId: finalCfg.DEVICE_ID,
+                emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
+            });
             const unregisterMemoryAccount = registerMemoryLifecycleAccount({
                 accountId,
                 deviceId: finalCfg.DEVICE_ID,
@@ -1423,6 +1434,7 @@ export const xiotboxPlugin = {
                     }, log);
                     log?.info?.(`[XiotBox][${accountId}] Stopping channel instance=${instanceId} reason=${reason}`);
                     unregisterApprovalAccount();
+                    unregisterAskUserAccount();
                     unregisterMemoryAccount();
                     unregisterSubagentAccount();
                     unregisterDirectSender();
@@ -2120,6 +2132,18 @@ export const xiotboxPlugin = {
                             traceId: lifecycleContext.traceId,
                         })
                         : () => { };
+                    const unregisterAskUserBinding = conversationBinding && lifecycleContext
+                        ? registerActiveAskUserBinding({
+                            accountId,
+                            deviceId: finalCfg.DEVICE_ID,
+                            sessionKey,
+                            bindingId: lifecycleContext.bindingId,
+                            conversationId: lifecycleContext.conversationId,
+                            agentId,
+                            runId: lifecycleContext.runId,
+                            traceId: lifecycleContext.traceId,
+                        })
+                        : () => { };
                     const unregisterMemoryBinding = conversationBinding && lifecycleContext
                         ? registerActiveMemoryBinding({
                             accountId,
@@ -2231,6 +2255,7 @@ export const xiotboxPlugin = {
                     }
                     finally {
                         unregisterApprovalBinding();
+                        unregisterAskUserBinding();
                         unregisterMemoryBinding();
                         unregisterSubagentParent();
                         unregisterToolRun();
@@ -2473,6 +2498,17 @@ export const xiotboxPlugin = {
                 });
                 if (!result.ok) {
                     log?.warn?.(`[XiotBox][${accountId}] approval resolve failed request_id=${String(request?.request_id || '').trim()} error=${result.error}`);
+                }
+            });
+            client.on('V2.ASK_USER_ANSWER', async (request) => {
+                const result = await handleGatewayAskUserResolve({
+                    accountId,
+                    request,
+                    cfg: resolveEffectiveConfig(ctx, cfg),
+                    sendAck: (ack) => client.sendMessage('V2.ASK_USER_ACK', ack),
+                });
+                if (!result.ok) {
+                    log?.warn?.(`[XiotBox][${accountId}] ask_user resolve failed request_id=${String(request?.request_id || '').trim()} error=${result.error}`);
                 }
             });
             client.on('V2.AGENT_PROFILE_SYNC', async (request) => {

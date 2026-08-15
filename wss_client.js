@@ -336,6 +336,10 @@ class WSSClient extends EventEmitter {
                 this.emit('V2.APPROVAL_RESOLVE', payload);
                 break;
 
+            case 'V2.ASK_USER_ANSWER':
+                this.emit('V2.ASK_USER_ANSWER', payload);
+                break;
+
             case 'V2.AGENT_PROFILE_SYNC':
                 // Gateway asks the channel to materialize a main agent as
                 // agents.entries.<agent_id>; channel.ts listens for this event.
