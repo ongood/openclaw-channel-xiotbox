@@ -1,11 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { registerActiveToolRun } from './tool-lifecycle.js';
 const MAX_CHILD_RUNS = 2000;
 const CHILD_RUN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const accounts = new Map();
 const activeParents = new Map();
 const childRuns = new Map();
+// 子会话 → 工具生命周期注销器（把子智能体的工具动作投影到父会话）。
+const childToolRunUnregisters = new Map();
 function normalized(value) {
     return String(value || '').trim();
 }
@@ -145,6 +148,24 @@ function emitChildEvent(record, kind, payload) {
     });
     return true;
 }
+/** 把子智能体的工具动作投影到父会话（run_id = childRunId，actor=subagent）。 */
+function emitChildToolEvent(record, kind, payload, occurrenceId) {
+    const account = accounts.get(record.deviceId);
+    if (!account)
+        return;
+    account.emit({
+        event_id: `${record.childRunId}:tool:${occurrenceId}`,
+        binding_id: record.bindingId,
+        conversation_id: record.conversationId,
+        kind,
+        actor: { type: 'subagent', id: record.childAgentId },
+        run_id: record.childRunId,
+        parent_run_id: record.parentRunId,
+        visibility: 'user',
+        trace_id: record.traceId,
+        payload,
+    });
+}
 export function handleSubagentSpawned(event, ctx) {
     const parent = resolveParent(ctx);
     const childRunId = normalized(event?.runId || ctx?.runId);
@@ -178,6 +199,12 @@ export function handleSubagentSpawned(event, ctx) {
         thread_requested: event?.threadRequested === true,
         status: 'running',
     });
+    // 把子会话的工具动作也投影到父会话（run_id=childRunId），供父端展示子智能体时间线。
+    childToolRunUnregisters.set(childKey(record.deviceId, childRunId), registerActiveToolRun({
+        sessionKey: childSessionKey,
+        agentId: childAgentId,
+        emit: (kind, payload, occurrenceId) => emitChildToolEvent(record, kind, payload, occurrenceId),
+    }));
 }
 function resolveChild(event, ctx) {
     const childRunId = normalized(event?.runId || ctx?.runId);
@@ -204,11 +231,17 @@ export function handleSubagentEnded(event, ctx) {
     if (!emitted)
         return;
     childRuns.delete(childKey(record.deviceId, record.childRunId));
+    const toolUnregister = childToolRunUnregisters.get(childKey(record.deviceId, record.childRunId));
+    toolUnregister?.();
+    childToolRunUnregisters.delete(childKey(record.deviceId, record.childRunId));
     if (!persistDevice(record.deviceId)) {
         childRuns.set(childKey(record.deviceId, record.childRunId), record);
     }
 }
 export function resetSubagentLifecycleForTest() {
+    for (const unregister of childToolRunUnregisters.values())
+        unregister();
+    childToolRunUnregisters.clear();
     accounts.clear();
     activeParents.clear();
     childRuns.clear();
