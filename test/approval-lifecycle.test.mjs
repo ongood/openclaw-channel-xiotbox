@@ -178,6 +178,17 @@ test('V2.APPROVAL_RESOLVE handler acknowledges success and failure', async () =>
   assert.deepEqual(acks[0], { request_id: 'request-1', status: 'accepted' });
   assert.equal(resolverCalls[0].approvalId, 'approval-1');
   assert.equal(resolverCalls[0].decision, 'allow-once');
+  assert.equal(harness.emitted.length, 2);
+  assert.equal(harness.emitted[1].kind, 'approval.resolved');
+  assert.equal(harness.emitted[1].payload.decision, 'allow-once');
+  assert.equal(harness.emitted[1].payload.resolved_by, 'user:101');
+
+  const failingPayload = runtime.presentation.buildPendingPayload({
+    request: { ...request(), id: 'approval-2' },
+    approvalKind: 'exec',
+    view: { actions: [{ decision: 'deny' }] },
+  });
+  runtime.transport.deliverPending({ preparedTarget: failingPayload });
 
   setApprovalResolverForTest(async () => {
     throw new Error('resolver exploded');
@@ -186,7 +197,7 @@ test('V2.APPROVAL_RESOLVE handler acknowledges success and failure', async () =>
     accountId: 'default',
     request: {
       request_id: 'request-2',
-      approval_id: 'approval-1',
+      approval_id: 'approval-2',
       approval_kind: 'exec',
       decision: 'deny',
       reviewer_id: 'user:101',
@@ -202,6 +213,7 @@ test('V2.APPROVAL_RESOLVE handler acknowledges success and failure', async () =>
     status: 'rejected',
     error_code: 'approval_resolution_failed',
   });
+  assert.equal(harness.emitted.length, 3);
 
   harness.unregisterBinding();
   harness.unregisterAccount();
@@ -249,6 +261,32 @@ test('outbound pending approval payload projects approval.requested via session 
   harness.unregisterAccount();
 });
 
+test('outbound pending approval keeps its conversation after active dispatch ends', () => {
+  const harness = setup();
+  harness.unregisterBinding();
+
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: 'Approval required.',
+      channelData: {
+        execApproval: {
+          approvalId: 'approval-late',
+          approvalKind: 'exec',
+          allowedDecisions: ['allow-once', 'deny'],
+          sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1',
+        },
+      },
+    },
+  });
+
+  assert.equal(harness.emitted.length, 1);
+  assert.equal(harness.emitted[0].kind, 'approval.requested');
+  assert.equal(harness.emitted[0].conversation_id, 'conversation-1');
+  assert.equal(harness.emitted[0].run_id, 'command-1');
+  harness.unregisterAccount();
+});
+
 test('outbound pending approval without sessionKey falls back to single account binding', () => {
   const harness = setup();
   handleOutboundApprovalPayload({
@@ -268,6 +306,111 @@ test('outbound pending approval without sessionKey falls back to single account 
   assert.equal(harness.emitted[0].kind, 'approval.requested');
   assert.equal(harness.emitted[0].payload.approval_id, 'approval-2');
   assert.equal(harness.emitted[0].run_id, 'command-1');
+  harness.unregisterBinding();
+  harness.unregisterAccount();
+});
+
+test('delayed outbound approval without sessionKey uses target conversation binding', () => {
+  const harness = setup();
+  const unregisterOther = registerActiveApprovalBinding({
+    accountId: 'default',
+    deviceId: 'device-1',
+    sessionKey: 'agent:other:xiotbox:device-1:conversation-2',
+    bindingId: 'binding-2',
+    conversationId: 'conversation-2',
+    agentId: 'other',
+    runId: 'command-2',
+    traceId: 'trace-2',
+  });
+  harness.unregisterBinding();
+  unregisterOther();
+
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    conversationId: 'conversation-1',
+    payload: {
+      text: 'Approval required.',
+      channelData: {
+        execApproval: {
+          approvalId: 'approval-delayed-no-session',
+          approvalKind: 'exec',
+          allowedDecisions: ['allow-once', 'deny'],
+        },
+      },
+    },
+  });
+
+  assert.equal(harness.emitted.length, 1);
+  assert.equal(harness.emitted[0].binding_id, 'binding-1');
+  assert.equal(harness.emitted[0].conversation_id, 'conversation-1');
+  assert.equal(harness.emitted[0].run_id, 'command-1');
+  harness.unregisterAccount();
+});
+
+test('text-only exec approval fallback projects while dispatch binding is active', () => {
+  const harness = setup();
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    conversationId: 'conversation-1',
+    payload: {
+      text: [
+        'Approval required.',
+        'Run:',
+        '```txt',
+        '/approve approval-text allow-once',
+        '```',
+        'Pending command:',
+        '```sh',
+        'echo redacted',
+        '```',
+        'Other options:',
+        '```txt',
+        '/approve approval-text deny',
+        '```',
+        'Expires in: 30m',
+        'Full id: `approval-text-full-id`',
+      ].join('\n'),
+    },
+  });
+
+  assert.equal(harness.emitted.length, 1);
+  assert.equal(harness.emitted[0].kind, 'approval.requested');
+  assert.equal(harness.emitted[0].payload.approval_id, 'approval-text-full-id');
+  assert.deepEqual(harness.emitted[0].payload.allowed_decisions, ['allow-once', 'deny']);
+  assert.equal(typeof harness.emitted[0].payload.expires_at, 'number');
+  assert.ok(harness.emitted[0].payload.expires_at > Date.now() / 1000 + 1700);
+  assert.equal(JSON.stringify(harness.emitted[0]).includes('echo redacted'), false);
+  harness.unregisterBinding();
+  harness.unregisterAccount();
+});
+
+test('text-only approval followup projects approval.resolved', () => {
+  const harness = setup();
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    conversationId: 'conversation-1',
+    payload: {
+      text: [
+        'Approval required.',
+        'Run: /approve approval-text-resolved allow-once',
+        'Pending command:',
+        'echo redacted',
+        'Expires in: 30m',
+        'Full id: `approval-text-resolved`',
+      ].join('\n'),
+    },
+  });
+  handleOutboundApprovalPayload({
+    accountId: 'default',
+    payload: {
+      text: 'Exec approval allowed once. Resolved by user:5. ID: approval-text-resolved',
+    },
+  });
+
+  assert.equal(harness.emitted.length, 2);
+  assert.equal(harness.emitted[1].kind, 'approval.resolved');
+  assert.equal(harness.emitted[1].payload.decision, 'allow-once');
+  assert.equal(harness.emitted[1].payload.resolved_by, 'user:5');
   harness.unregisterBinding();
   harness.unregisterAccount();
 });
@@ -356,7 +499,7 @@ test('outbound projection skips non-approval payloads and unbound approvals', ()
   handleOutboundApprovalPayload({ accountId: 'default', payload: { text: 'hello' } });
   harness.unregisterBinding();
   handleOutboundApprovalPayload({
-    accountId: 'default',
+    accountId: 'unbound-account',
     payload: {
       text: 'Approval required.',
       channelData: { execApproval: { approvalId: 'unknown-1', approvalKind: 'exec' } },

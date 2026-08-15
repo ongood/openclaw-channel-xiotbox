@@ -1,8 +1,8 @@
 # OpenClaw Entry Contract Spike for XiotBox 3.1
 
-> Type: COMPLETED SPIKE · Decision recorded for 3.1 · Not current 4.0.1 architecture
+> Type: COMPLETED SPIKE · Decision recorded for 3.1 · Not current 4.0.8 architecture
 >
-> Goal: record the completed 3.1 investigation. Current behavior must be verified against version 4.0.1 code and tests.
+> Goal: record the completed 3.1 investigation. Current behavior must be verified against version 4.0.8 code and tests.
 
 ## Decision Rule
 

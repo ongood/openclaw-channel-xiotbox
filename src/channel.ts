@@ -1533,15 +1533,14 @@ export const xiotboxPlugin = {
         timestamp: Date.now(),
       };
     },
-    // Project approval prompts delivered as outbound text (agent tool-result
-    // followup / approval forwarder) into Gateway approval events so Flutter
-    // can render buttons. OpenClaw 2026.8.1 does not route these through the
-    // channel-native approval runtime for this channel, so the outbound hook
-    // is the only seam that observes them.
+    // Fallback for core-initiated or delayed approval deliveries. Replies from
+    // XiotBox inbound dispatch are observed in deliver() above because that
+    // direct COMMAND_RESULT path bypasses the standard outbound adapter.
     afterDeliverPayload: async (params: any) => {
       handleOutboundApprovalPayload({
         accountId: params?.target?.accountId || 'default',
         payload: params?.payload,
+        conversationId: params?.target?.threadId,
       });
     },
   },
@@ -2269,6 +2268,17 @@ export const xiotboxPlugin = {
           const deliver = async (outPayload: any, info?: any) => {
             const kind = info?.kind || 'block';
             sawAnyDeliver = true;
+
+            // XiotBox's inbound dispatcher delivers agent replies directly to
+            // COMMAND_RESULT, bypassing the standard channel outbound adapter.
+            // Observe approval payloads here while the conversation binding is
+            // still active; the outbound hook remains as an idempotent fallback
+            // for delayed/core-initiated deliveries.
+            handleOutboundApprovalPayload({
+              accountId,
+              payload: outPayload,
+              conversationId: conversationBinding?.conversationId || threadId,
+            });
 
             const isToolKind = kind === 'tool';
             const hasTool = isToolKind || detectToolSignals(outPayload);

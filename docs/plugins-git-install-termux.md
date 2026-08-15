@@ -115,15 +115,15 @@ apt-get install -y make g++
 Direct Git install:
 
 ```bash
-openclaw plugins install https://github.com/xiotbox/openclaw-channel-xiotbox.git#4.0.1
+openclaw plugins install https://github.com/xiotbox/openclaw-channel-xiotbox.git#4.0.8
 ```
 
 Or use the maintained helper script:
 
 ```bash
-bash scripts/update_openclaw_xiotbox.sh 4.0.1
+bash scripts/update_openclaw_xiotbox.sh 4.0.8
 # or
-bash scripts/update_openclaw_xiotbox.sh https://github.com/xiotbox/openclaw-channel-xiotbox.git#4.0.1
+bash scripts/update_openclaw_xiotbox.sh https://github.com/xiotbox/openclaw-channel-xiotbox.git#4.0.8
 ```
 
 On Linux/systemd hosts, restart the gateway service after install/update:
