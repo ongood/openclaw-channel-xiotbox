@@ -13,6 +13,47 @@ const pendingParentDeliveries = new Map();
 function normalized(value) {
     return String(value || '').trim();
 }
+export function resolvePendingSubagentDeliveryByConversation(conversationId) {
+    const target = normalized(conversationId);
+    if (!target)
+        return null;
+    // 1) 已登记的待交付（requester-settle 完成前）：直接用原 command_id/thread_id。
+    for (const pending of pendingParentDeliveries.values()) {
+        if (pending.conversationId === target) {
+            return {
+                commandId: pending.parentRunId,
+                threadId: pending.threadId,
+                traceId: pending.traceId,
+            };
+        }
+    }
+    // 2) 子智能体仍在运行/刚结束：从 childRuns 里找回该会话的父 run 关联。
+    //    优先取最近创建的 child（父 run 尚未结束时 sendText 也可能先到）。
+    const matches = [...childRuns.values()]
+        .filter((record) => record.conversationId === target)
+        .sort((left, right) => right.createdAt - left.createdAt);
+    if (matches.length) {
+        const record = matches[0];
+        return {
+            commandId: record.parentRunId,
+            threadId: record.threadId,
+            traceId: record.traceId,
+        };
+    }
+    // 3) 活跃父 run（conversation 绑定解析出来的会话仍挂着父 run）。
+    for (const parents of activeParents.values()) {
+        for (const parent of parents.values()) {
+            if (parent.conversationId === target) {
+                return {
+                    commandId: parent.parentRunId,
+                    threadId: parent.threadId,
+                    traceId: parent.traceId,
+                };
+            }
+        }
+    }
+    return null;
+}
 function safeDeviceId(value) {
     return normalized(value).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 160) || 'default';
 }

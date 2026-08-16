@@ -9,7 +9,7 @@ import { handleGatewayAskUserResolve, handleOutboundAskUserPayload, registerActi
 import { handleAgentProfileSync } from './agent-profile-sync.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import { registerActiveMemoryBinding, registerMemoryLifecycleAccount, } from './memory-lifecycle.js';
-import { registerActiveSubagentParent, registerSubagentLifecycleAccount, } from './subagent-lifecycle.js';
+import { registerActiveSubagentParent, registerSubagentLifecycleAccount, resolvePendingSubagentDeliveryByConversation, } from './subagent-lifecycle.js';
 import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js';
 import { setSessionModelOverride } from './session-model.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
@@ -1321,10 +1321,22 @@ export const xiotboxPlugin = {
                 console.error('[xiotbox-send] NO DIRECT SENDER');
                 throw new Error('xiotbox outbound sender unavailable');
             }
+            // When the core delivers a subagent-settle summary through the outbound
+            // adapter, ctx.threadId is often missing and ctx.to carries the
+            // conversation id. Resolve the original parent command/thread so the
+            // Gateway updates the SAME gw_message row instead of creating a new
+            // direct_* id that never persists.
+            const deliveryContext = resolvePendingSubagentDeliveryByConversation(ctx?.to);
+            const resolvedCommandId = (deliveryContext?.commandId || '').trim() ||
+                (ctx?.commandId ? String(ctx.commandId) : '') ||
+                undefined;
+            const resolvedThreadId = (deliveryContext?.threadId || '').trim() ||
+                (ctx?.threadId ? String(ctx.threadId) : undefined);
             const result = sender({
                 text: ctx?.text || '',
-                threadId: ctx?.threadId ? String(ctx.threadId) : undefined,
-                traceId: ctx?.identity?.id || null,
+                commandId: resolvedCommandId,
+                threadId: resolvedThreadId,
+                traceId: deliveryContext?.traceId || ctx?.identity?.id || null,
             });
             try {
                 console.error(`[xiotbox-send] result delivered=${result.delivered} error=${result.error || ''}`);

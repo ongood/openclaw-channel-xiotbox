@@ -11,6 +11,7 @@ import {
   registerActiveSubagentParent,
   registerSubagentLifecycleAccount,
   resetSubagentLifecycleForTest,
+  resolvePendingSubagentDeliveryByConversation,
 } from '../dist/src/subagent-lifecycle.js';
 import { registerDirectSender } from '../dist/src/direct-send.js';
 import {
@@ -351,6 +352,40 @@ test('child tool events do not leak into main session view', () => {
       assert.equal(event.run_id, 'child-run-1', `child ${event.kind} must have run_id`);
     }
   }
+
+  harness.unregisterAccount();
+  fs.rmSync(harness.tempDir, { recursive: true, force: true });
+});
+
+test('resolves original parent command/thread for outbound settle delivery', () => {
+  const harness = createHarness();
+  const unregisterParent = registerParent();
+  spawnChild();
+  unregisterParent();
+
+  // Child still running: outbound sendText may arrive before subagent_ended.
+  const running = resolvePendingSubagentDeliveryByConversation('conversation-1');
+  assert.deepEqual(running, {
+    commandId: 'command-1',
+    threadId: 'thread-1',
+    traceId: 'trace-1',
+  });
+
+  // After the child ends and is the last sibling, pending delivery is set.
+  handleSubagentEnded(
+    { targetSessionKey: 'agent:worker:subagent:child-1', targetKind: 'subagent', runId: 'child-run-1', outcome: 'ok' },
+    { runId: 'child-run-1', childSessionKey: 'agent:worker:subagent:child-1', requesterSessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1' },
+  );
+  const settled = resolvePendingSubagentDeliveryByConversation('conversation-1');
+  assert.deepEqual(settled, {
+    commandId: 'command-1',
+    threadId: 'thread-1',
+    traceId: 'trace-1',
+  });
+
+  // Unknown conversation: no delivery context.
+  assert.equal(resolvePendingSubagentDeliveryByConversation('other-conv'), null);
+  assert.equal(resolvePendingSubagentDeliveryByConversation(''), null);
 
   harness.unregisterAccount();
   fs.rmSync(harness.tempDir, { recursive: true, force: true });
