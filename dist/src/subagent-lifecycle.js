@@ -225,13 +225,26 @@ function parentAgentIdFromSessionKey(sessionKey) {
         return '';
     return match[1].toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
 }
+function logWake(message) {
+    try {
+        console.error(`[xiotbox-subagent-wake] ${message}`);
+    }
+    catch {
+        // ignore logging failures
+    }
+}
 function requestParentSupervisorWake(params) {
     const requesterSessionKey = normalized(params.requesterSessionKey);
-    if (!requesterSessionKey)
+    if (!requesterSessionKey) {
+        logWake('no requesterSessionKey; skip wake');
         return;
-    const requestHeartbeat = getXiotboxRuntimeOrNull()?.system?.requestHeartbeat;
-    if (typeof requestHeartbeat !== 'function')
+    }
+    const runtime = getXiotboxRuntimeOrNull();
+    const requestHeartbeat = runtime?.system?.requestHeartbeat;
+    if (typeof requestHeartbeat !== 'function') {
+        logWake(`requestHeartbeat unavailable (runtime=${!!runtime}, system=${!!runtime?.system})`);
         return;
+    }
     try {
         requestHeartbeat({
             source: 'background-task',
@@ -240,12 +253,15 @@ function requestParentSupervisorWake(params) {
             ...(params.parentAgentId ? { agentId: params.parentAgentId } : {}),
             sessionKey: requesterSessionKey,
         });
+        logWake(`wake requested agent=${params.parentAgentId || ''} session=${requesterSessionKey}`);
     }
-    catch {
-        // Wake is best-effort; the projection below still completes.
+    catch (err) {
+        logWake(`wake failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 }
 export function handleSubagentEnded(event, ctx) {
+    logWake(`handleSubagentEnded targetKind=${event?.targetKind} runId=${event?.runId || ctx?.runId || ''} ` +
+        `requesterSessionKey=${ctx?.requesterSessionKey || ''}`);
     if (normalized(event?.targetKind) !== 'subagent')
         return;
     const record = resolveChild(event, ctx);

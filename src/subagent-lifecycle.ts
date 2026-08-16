@@ -313,14 +313,29 @@ function parentAgentIdFromSessionKey(sessionKey?: string | null): string {
   return match[1].toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
 }
 
+function logWake(message: string): void {
+  try {
+    console.error(`[xiotbox-subagent-wake] ${message}`);
+  } catch {
+    // ignore logging failures
+  }
+}
+
 function requestParentSupervisorWake(params: {
   requesterSessionKey?: string | null;
   parentAgentId?: string;
 }): void {
   const requesterSessionKey = normalized(params.requesterSessionKey);
-  if (!requesterSessionKey) return;
-  const requestHeartbeat = getXiotboxRuntimeOrNull()?.system?.requestHeartbeat;
-  if (typeof requestHeartbeat !== 'function') return;
+  if (!requesterSessionKey) {
+    logWake('no requesterSessionKey; skip wake');
+    return;
+  }
+  const runtime = getXiotboxRuntimeOrNull();
+  const requestHeartbeat = runtime?.system?.requestHeartbeat;
+  if (typeof requestHeartbeat !== 'function') {
+    logWake(`requestHeartbeat unavailable (runtime=${!!runtime}, system=${!!runtime?.system})`);
+    return;
+  }
   try {
     requestHeartbeat({
       source: 'background-task',
@@ -329,12 +344,17 @@ function requestParentSupervisorWake(params: {
       ...(params.parentAgentId ? { agentId: params.parentAgentId } : {}),
       sessionKey: requesterSessionKey,
     });
-  } catch {
-    // Wake is best-effort; the projection below still completes.
+    logWake(`wake requested agent=${params.parentAgentId || ''} session=${requesterSessionKey}`);
+  } catch (err) {
+    logWake(`wake failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
 export function handleSubagentEnded(event: SubagentEndedEvent, ctx: SubagentHookContext): void {
+  logWake(
+    `handleSubagentEnded targetKind=${event?.targetKind} runId=${event?.runId || ctx?.runId || ''} ` +
+      `requesterSessionKey=${ctx?.requesterSessionKey || ''}`,
+  );
   if (normalized(event?.targetKind) !== 'subagent') return;
   const record = resolveChild(event, ctx);
   const requesterSessionKey = normalized(ctx?.requesterSessionKey);

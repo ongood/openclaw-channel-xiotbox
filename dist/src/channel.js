@@ -1876,11 +1876,11 @@ export const xiotboxPlugin = {
                         Provider: 'xiotbox',
                         Surface: 'xiotbox',
                         OriginatingChannel: 'xiotbox',
-                        OriginatingTo: finalCfg.DEVICE_ID,
+                        OriginatingTo: conversationBinding?.conversationId || threadId,
                         ...inboundMediaCtx,
                         DeliveryContext: {
                             channel: 'xiotbox',
-                            to: finalCfg.DEVICE_ID,
+                            to: conversationBinding?.conversationId || threadId,
                             threadId,
                             contextEpoch,
                             conversationId: conversationBinding?.conversationId,
