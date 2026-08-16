@@ -1671,6 +1671,7 @@ export const xiotboxPlugin = {
         emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
       });
       const unregisterSubagentAccount = registerSubagentLifecycleAccount({
+        accountId,
         deviceId: finalCfg.DEVICE_ID,
         emit: (eventPayload) => eventOutbox.enqueue(eventPayload),
         logger: log,
@@ -1743,12 +1744,14 @@ export const xiotboxPlugin = {
       // adapter for subagent-completion announce and exec-approval followups.
       // It mirrors buildEncryptedResult but targets the peer directory instead
       // of a single inbound command envelope.
-      unregisterDirectSender = registerDirectSender(accountId, ({ text, threadId, traceId }) => {
+      unregisterDirectSender = registerDirectSender(accountId, ({ text, commandId, threadId, traceId }) => {
         const peers = e2e.directReplyPeers();
         if (!peers.length) {
           return { delivered: false, error: 'no_e2e_peers' };
         }
-        const commandId = `direct_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        const resolvedCommandId =
+          String(commandId || '').trim() ||
+          `direct_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
         const resolvedThreadId = normalizeThreadId(threadId || e2e.threadId);
         const e2eMulti: Record<string, any> = {};
         let primaryEnv: any = null;
@@ -1760,7 +1763,7 @@ export const xiotboxPlugin = {
               direction: 'p2c',
               device_id: finalCfg.DEVICE_ID,
               thread_id: resolvedThreadId,
-              command_id: commandId,
+              command_id: resolvedCommandId,
               content_type: 'text/markdown',
               chunk_seq: 0,
               enc_v: e2e.encV,
@@ -1775,7 +1778,8 @@ export const xiotboxPlugin = {
           e2eMulti[envKeyId || `peer_${Object.keys(e2eMulti).length}`] = envOut;
         }
         client.sendMessage('COMMAND_RESULT', {
-          command_id: commandId,
+          command_id: resolvedCommandId,
+          thread_id: resolvedThreadId,
           status: 'success',
           trace_id: traceId || null,
           result: {
@@ -1785,9 +1789,10 @@ export const xiotboxPlugin = {
             enc_v: e2e.encV,
             content_type: 'text/markdown',
             chunk_seq: 0,
+            thread_id: resolvedThreadId,
           },
         });
-        return { delivered: true, commandId };
+        return { delivered: true, commandId: resolvedCommandId };
       });
 
       const pruneCache = () => {
@@ -2465,6 +2470,7 @@ export const xiotboxPlugin = {
                 sessionKey,
                 bindingId: lifecycleContext.bindingId,
                 conversationId: lifecycleContext.conversationId,
+                threadId,
                 agentId,
                 parentRunId: lifecycleContext.runId,
                 traceId: lifecycleContext.traceId,

@@ -6,12 +6,13 @@ import test from 'node:test';
 
 import {
   handleSubagentEnded,
+  handleSubagentParentAgentEnd,
   handleSubagentSpawned,
   registerActiveSubagentParent,
   registerSubagentLifecycleAccount,
   resetSubagentLifecycleForTest,
 } from '../dist/src/subagent-lifecycle.js';
-import { setXiotboxRuntime } from '../dist/src/runtime.js';
+import { registerDirectSender } from '../dist/src/direct-send.js';
 
 test.beforeEach(() => resetSubagentLifecycleForTest());
 
@@ -33,6 +34,7 @@ function registerParent() {
     sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1',
     bindingId: 'binding-1',
     conversationId: 'conversation-1',
+    threadId: 'thread-1',
     agentId: 'supervisor',
     parentRunId: 'command-1',
     traceId: 'trace-1',
@@ -148,61 +150,62 @@ test('fails closed when parent correlation is missing or ambiguous', () => {
   fs.rmSync(harness.tempDir, { recursive: true, force: true });
 });
 
-test('wakes the parent supervisor session when a subagent completes', () => {
-  const wakes = [];
-  setXiotboxRuntime({
-    system: {
-      requestHeartbeat: (opts) => wakes.push(opts),
-    },
+test('proactively delivers the requester-settle final through XiotBox', () => {
+  const harness = createHarness();
+  const unregisterParent = registerParent();
+  spawnChild();
+  unregisterParent();
+  const sent = [];
+  const unregisterSender = registerDirectSender('default', (params) => {
+    sent.push(params);
+    return { delivered: true, commandId: 'direct-1' };
   });
-  try {
-    handleSubagentEnded(
-      {
-        targetSessionKey: 'agent:worker:subagent:child-1',
-        targetKind: 'subagent',
-        runId: 'child-run-1',
-        outcome: 'ok',
-      },
-      {
-        runId: 'child-run-1',
-        childSessionKey: 'agent:worker:subagent:child-1',
-        requesterSessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1',
-      },
-    );
 
-    assert.equal(wakes.length, 1);
-    assert.equal(wakes[0].source, 'notifications-event');
-    assert.equal(wakes[0].intent, 'immediate');
-    assert.equal(wakes[0].reason, 'wake');
-    assert.equal(wakes[0].sessionKey, 'agent:supervisor:xiotbox:device-1:conversation-1');
-    assert.equal(wakes[0].agentId, 'supervisor');
-  } finally {
-    setXiotboxRuntime(null);
-  }
+  handleSubagentEnded(
+    {
+      targetSessionKey: 'agent:worker:subagent:child-1',
+      targetKind: 'subagent',
+      runId: 'child-run-1',
+      outcome: 'ok',
+    },
+    {
+      runId: 'child-run-1',
+      childSessionKey: 'agent:worker:subagent:child-1',
+      requesterSessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1',
+    },
+  );
+  handleSubagentParentAgentEnd(
+    {
+      runId: 'announce:requester-settle:supervisor:batch-1',
+      success: true,
+      messages: [
+        { role: 'assistant', content: [{ type: 'text', text: '汇总后的最终结果' }] },
+      ],
+    },
+    { sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1' },
+  );
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].text, '汇总后的最终结果');
+  assert.equal(sent[0].threadId, 'thread-1');
+  assert.equal(sent[0].commandId, 'command-1');
+  unregisterSender();
+  harness.unregisterAccount();
+  fs.rmSync(harness.tempDir, { recursive: true, force: true });
 });
 
-test('does not wake the parent without a requester session key', () => {
-  const wakes = [];
-  setXiotboxRuntime({
-    system: {
-      requestHeartbeat: (opts) => wakes.push(opts),
-    },
+test('does not deliver ordinary agent_end output as a subagent result', () => {
+  const sent = [];
+  const unregisterSender = registerDirectSender('default', (params) => {
+    sent.push(params);
+    return { delivered: true };
   });
-  try {
-    handleSubagentEnded(
-      {
-        targetSessionKey: 'agent:worker:subagent:child-1',
-        targetKind: 'subagent',
-        runId: 'child-run-1',
-        outcome: 'ok',
-      },
-      { runId: 'child-run-1', childSessionKey: 'agent:worker:subagent:child-1' },
-    );
-
-    assert.equal(wakes.length, 0);
-  } finally {
-    setXiotboxRuntime(null);
-  }
+  handleSubagentParentAgentEnd(
+    { runId: 'ordinary-run', success: true, messages: [{ role: 'assistant', content: 'hello' }] },
+    { sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1' },
+  );
+  assert.equal(sent.length, 0);
+  unregisterSender();
 });
 
 test('preserves a damaged state file and disables projection', () => {

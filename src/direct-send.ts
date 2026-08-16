@@ -1,5 +1,6 @@
 export type DirectSendParams = {
   text: string;
+  commandId?: string | null;
   threadId?: string | null;
   traceId?: string | null;
 };

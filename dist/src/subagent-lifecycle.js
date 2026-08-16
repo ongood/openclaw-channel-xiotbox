@@ -1,15 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { registerActiveToolRun } from './tool-lifecycle.js';
-import { getXiotboxRuntimeOrNull } from './runtime.js';
+import { getDirectSender } from './direct-send.js';
 const MAX_CHILD_RUNS = 2000;
 const CHILD_RUN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const accounts = new Map();
 const activeParents = new Map();
 const childRuns = new Map();
-// 子会话 → 工具生命周期注销器（把子智能体的工具动作投影到父会话）。
-const childToolRunUnregisters = new Map();
+const pendingParentDeliveries = new Map();
 function normalized(value) {
     return String(value || '').trim();
 }
@@ -93,6 +91,7 @@ export function registerSubagentLifecycleAccount(options) {
     if (!deviceId)
         return () => { };
     const registration = {
+        accountId: normalized(options.accountId) || 'default',
         filePath: path.resolve(options.filePath || resolveSubagentStatePath(deviceId)),
         emit: options.emit,
         logger: options.logger,
@@ -149,24 +148,6 @@ function emitChildEvent(record, kind, payload) {
     });
     return true;
 }
-/** 把子智能体的工具动作投影到父会话（run_id = childRunId，actor=subagent）。 */
-function emitChildToolEvent(record, kind, payload, occurrenceId) {
-    const account = accounts.get(record.deviceId);
-    if (!account)
-        return;
-    account.emit({
-        event_id: `${record.childRunId}:tool:${occurrenceId}`,
-        binding_id: record.bindingId,
-        conversation_id: record.conversationId,
-        kind,
-        actor: { type: 'subagent', id: record.childAgentId },
-        run_id: record.childRunId,
-        parent_run_id: record.parentRunId,
-        visibility: 'user',
-        trace_id: record.traceId,
-        payload,
-    });
-}
 export function handleSubagentSpawned(event, ctx) {
     const parent = resolveParent(ctx);
     const childRunId = normalized(event?.runId || ctx?.runId);
@@ -178,7 +159,9 @@ export function handleSubagentSpawned(event, ctx) {
         deviceId: parent.deviceId,
         bindingId: parent.bindingId,
         conversationId: parent.conversationId,
+        threadId: parent.threadId,
         parentAgentId: parent.agentId,
+        parentSessionKey: parent.sessionKey,
         childAgentId,
         parentRunId: parent.parentRunId,
         childRunId,
@@ -200,12 +183,6 @@ export function handleSubagentSpawned(event, ctx) {
         thread_requested: event?.threadRequested === true,
         status: 'running',
     });
-    // 把子会话的工具动作也投影到父会话（run_id=childRunId），供父端展示子智能体时间线。
-    childToolRunUnregisters.set(childKey(record.deviceId, childRunId), registerActiveToolRun({
-        sessionKey: childSessionKey,
-        agentId: childAgentId,
-        emit: (kind, payload, occurrenceId) => emitChildToolEvent(record, kind, payload, occurrenceId),
-    }));
 }
 function resolveChild(event, ctx) {
     const childRunId = normalized(event?.runId || ctx?.runId);
@@ -218,13 +195,6 @@ function resolveChild(event, ctx) {
     }
     return candidates.length === 1 ? candidates[0] : null;
 }
-function parentAgentIdFromSessionKey(sessionKey) {
-    const raw = normalized(sessionKey);
-    const match = /^agent:([^:]+):/i.exec(raw);
-    if (!match?.[1])
-        return '';
-    return match[1].toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
-}
 function logWake(message) {
     try {
         console.error(`[xiotbox-subagent-wake] ${message}`);
@@ -233,33 +203,51 @@ function logWake(message) {
         // ignore logging failures
     }
 }
-function requestParentSupervisorWake(params) {
-    const requesterSessionKey = normalized(params.requesterSessionKey);
-    if (!requesterSessionKey) {
-        logWake('no requesterSessionKey; skip wake');
+function extractLatestAssistantText(messages) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message?.role !== 'assistant')
+            continue;
+        if (typeof message.content === 'string' && message.content.trim()) {
+            return message.content.trim();
+        }
+        if (!Array.isArray(message.content))
+            continue;
+        const text = message.content
+            .filter((part) => part?.type === 'text' && typeof part?.text === 'string')
+            .map((part) => part.text)
+            .join('\n')
+            .trim();
+        if (text)
+            return text;
+    }
+    return '';
+}
+export function handleSubagentParentAgentEnd(event, ctx) {
+    const runId = normalized(event?.runId || ctx?.runId);
+    if (!runId.startsWith('announce:requester-settle:') || event?.success !== true)
         return;
-    }
-    const runtime = getXiotboxRuntimeOrNull();
-    const requestHeartbeat = runtime?.system?.requestHeartbeat;
-    if (typeof requestHeartbeat !== 'function') {
-        logWake(`requestHeartbeat unavailable (runtime=${!!runtime}, system=${!!runtime?.system})`);
+    const sessionKey = normalized(ctx?.sessionKey);
+    const pending = pendingParentDeliveries.get(sessionKey);
+    if (!pending)
         return;
+    const text = extractLatestAssistantText(Array.isArray(event?.messages) ? event.messages : []);
+    if (!text || text === 'HEARTBEAT_OK')
+        return;
+    const account = accounts.get(pending.deviceId);
+    const sender = getDirectSender(account?.accountId || 'default');
+    const result = sender?.({
+        text,
+        commandId: pending.parentRunId,
+        threadId: pending.threadId,
+        traceId: pending.traceId,
+    });
+    if (result?.delivered) {
+        pendingParentDeliveries.delete(sessionKey);
+        logWake(`settled parent result delivered session=${sessionKey}`);
     }
-    try {
-        requestHeartbeat({
-            // `notifications-event` is accepted as a targeted one-shot wake even
-            // when the parent agent's recurring heartbeat is disabled. Older
-            // OpenClaw 2026.8 builds do not grant that exception to background-task.
-            source: 'notifications-event',
-            intent: 'immediate',
-            reason: 'wake',
-            ...(params.parentAgentId ? { agentId: params.parentAgentId } : {}),
-            sessionKey: requesterSessionKey,
-        });
-        logWake(`wake requested agent=${params.parentAgentId || ''} session=${requesterSessionKey}`);
-    }
-    catch (err) {
-        logWake(`wake failed: ${err instanceof Error ? err.message : String(err)}`);
+    else {
+        logWake(`settled parent result delivery failed session=${sessionKey} error=${result?.error || 'sender unavailable'}`);
     }
 }
 export function handleSubagentEnded(event, ctx) {
@@ -269,10 +257,6 @@ export function handleSubagentEnded(event, ctx) {
         return;
     const record = resolveChild(event, ctx);
     const requesterSessionKey = normalized(ctx?.requesterSessionKey);
-    const parentAgentId = record?.parentAgentId || parentAgentIdFromSessionKey(requesterSessionKey);
-    // Wake the parent supervisor session so it can review and relay the completed
-    // result immediately instead of waiting for a scheduled poll or a user prompt.
-    requestParentSupervisorWake({ requesterSessionKey, parentAgentId });
     if (!record)
         return;
     const emitted = emitChildEvent(record, 'subagent.completed', {
@@ -283,18 +267,24 @@ export function handleSubagentEnded(event, ctx) {
     if (!emitted)
         return;
     childRuns.delete(childKey(record.deviceId, record.childRunId));
-    const toolUnregister = childToolRunUnregisters.get(childKey(record.deviceId, record.childRunId));
-    toolUnregister?.();
-    childToolRunUnregisters.delete(childKey(record.deviceId, record.childRunId));
+    const parentSessionKey = requesterSessionKey || normalized(record.parentSessionKey);
+    const hasPendingSibling = [...childRuns.values()].some((candidate) => candidate.deviceId === record.deviceId && candidate.parentRunId === record.parentRunId);
+    if (parentSessionKey && !hasPendingSibling) {
+        pendingParentDeliveries.set(parentSessionKey, {
+            deviceId: record.deviceId,
+            conversationId: record.conversationId,
+            threadId: record.threadId,
+            parentRunId: record.parentRunId,
+            traceId: record.traceId,
+        });
+    }
     if (!persistDevice(record.deviceId)) {
         childRuns.set(childKey(record.deviceId, record.childRunId), record);
     }
 }
 export function resetSubagentLifecycleForTest() {
-    for (const unregister of childToolRunUnregisters.values())
-        unregister();
-    childToolRunUnregisters.clear();
     accounts.clear();
     activeParents.clear();
     childRuns.clear();
+    pendingParentDeliveries.clear();
 }
