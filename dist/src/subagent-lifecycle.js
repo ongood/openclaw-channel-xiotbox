@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { registerActiveToolRun } from './tool-lifecycle.js';
+import { getXiotboxRuntimeOrNull } from './runtime.js';
 const MAX_CHILD_RUNS = 2000;
 const CHILD_RUN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const accounts = new Map();
@@ -217,10 +218,42 @@ function resolveChild(event, ctx) {
     }
     return candidates.length === 1 ? candidates[0] : null;
 }
+function parentAgentIdFromSessionKey(sessionKey) {
+    const raw = normalized(sessionKey);
+    const match = /^agent:([^:]+):/i.exec(raw);
+    if (!match?.[1])
+        return '';
+    return match[1].toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+}
+function requestParentSupervisorWake(params) {
+    const requesterSessionKey = normalized(params.requesterSessionKey);
+    if (!requesterSessionKey)
+        return;
+    const requestHeartbeat = getXiotboxRuntimeOrNull()?.system?.requestHeartbeat;
+    if (typeof requestHeartbeat !== 'function')
+        return;
+    try {
+        requestHeartbeat({
+            source: 'background-task',
+            intent: 'immediate',
+            reason: 'subagent-completed',
+            ...(params.parentAgentId ? { agentId: params.parentAgentId } : {}),
+            sessionKey: requesterSessionKey,
+        });
+    }
+    catch {
+        // Wake is best-effort; the projection below still completes.
+    }
+}
 export function handleSubagentEnded(event, ctx) {
     if (normalized(event?.targetKind) !== 'subagent')
         return;
     const record = resolveChild(event, ctx);
+    const requesterSessionKey = normalized(ctx?.requesterSessionKey);
+    const parentAgentId = record?.parentAgentId || parentAgentIdFromSessionKey(requesterSessionKey);
+    // Wake the parent supervisor session so it can review and relay the completed
+    // result immediately instead of waiting for a scheduled poll or a user prompt.
+    requestParentSupervisorWake({ requesterSessionKey, parentAgentId });
     if (!record)
         return;
     const emitted = emitChildEvent(record, 'subagent.completed', {

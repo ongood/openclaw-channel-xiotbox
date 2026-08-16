@@ -11,6 +11,7 @@ import {
   registerSubagentLifecycleAccount,
   resetSubagentLifecycleForTest,
 } from '../dist/src/subagent-lifecycle.js';
+import { setXiotboxRuntime } from '../dist/src/runtime.js';
 
 test.beforeEach(() => resetSubagentLifecycleForTest());
 
@@ -145,6 +146,63 @@ test('fails closed when parent correlation is missing or ambiguous', () => {
   unregisterFirst();
   harness.unregisterAccount();
   fs.rmSync(harness.tempDir, { recursive: true, force: true });
+});
+
+test('wakes the parent supervisor session when a subagent completes', () => {
+  const wakes = [];
+  setXiotboxRuntime({
+    system: {
+      requestHeartbeat: (opts) => wakes.push(opts),
+    },
+  });
+  try {
+    handleSubagentEnded(
+      {
+        targetSessionKey: 'agent:worker:subagent:child-1',
+        targetKind: 'subagent',
+        runId: 'child-run-1',
+        outcome: 'ok',
+      },
+      {
+        runId: 'child-run-1',
+        childSessionKey: 'agent:worker:subagent:child-1',
+        requesterSessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1',
+      },
+    );
+
+    assert.equal(wakes.length, 1);
+    assert.equal(wakes[0].source, 'background-task');
+    assert.equal(wakes[0].intent, 'immediate');
+    assert.equal(wakes[0].reason, 'subagent-completed');
+    assert.equal(wakes[0].sessionKey, 'agent:supervisor:xiotbox:device-1:conversation-1');
+    assert.equal(wakes[0].agentId, 'supervisor');
+  } finally {
+    setXiotboxRuntime(null);
+  }
+});
+
+test('does not wake the parent without a requester session key', () => {
+  const wakes = [];
+  setXiotboxRuntime({
+    system: {
+      requestHeartbeat: (opts) => wakes.push(opts),
+    },
+  });
+  try {
+    handleSubagentEnded(
+      {
+        targetSessionKey: 'agent:worker:subagent:child-1',
+        targetKind: 'subagent',
+        runId: 'child-run-1',
+        outcome: 'ok',
+      },
+      { runId: 'child-run-1', childSessionKey: 'agent:worker:subagent:child-1' },
+    );
+
+    assert.equal(wakes.length, 0);
+  } finally {
+    setXiotboxRuntime(null);
+  }
 });
 
 test('preserves a damaged state file and disables projection', () => {

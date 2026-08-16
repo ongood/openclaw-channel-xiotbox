@@ -6,6 +6,21 @@ export type RuntimeReplySurface = {
   [key: string]: unknown;
 };
 
+export type PluginRuntimeSystem = {
+  /**
+   * Queues a heartbeat wake for a specific agent/session. Exposed by the host
+   * runtime (`api.runtime.system`); absent on hosts older than the seam.
+   */
+  requestHeartbeat?: (opts: {
+    source?: string;
+    intent?: string;
+    reason?: string;
+    agentId?: string;
+    sessionKey?: string;
+  }) => void;
+  enqueueSystemEvent?: (text: string, options?: Record<string, unknown>) => boolean;
+};
+
 export type PluginRuntime = {
   config?: {
     loadConfig?: () => unknown;
@@ -13,6 +28,7 @@ export type PluginRuntime = {
   channel?: {
     reply?: RuntimeReplySurface;
   };
+  system?: PluginRuntimeSystem;
 };
 
 let runtime: PluginRuntime | null = null;
