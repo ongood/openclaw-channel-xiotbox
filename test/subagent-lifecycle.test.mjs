@@ -13,8 +13,16 @@ import {
   resetSubagentLifecycleForTest,
 } from '../dist/src/subagent-lifecycle.js';
 import { registerDirectSender } from '../dist/src/direct-send.js';
+import {
+  handleBeforeToolCall,
+  handleAfterToolCall,
+  resetActiveToolRunsForTest,
+} from '../dist/src/tool-lifecycle.js';
 
-test.beforeEach(() => resetSubagentLifecycleForTest());
+test.beforeEach(() => {
+  resetSubagentLifecycleForTest();
+  resetActiveToolRunsForTest();
+});
 
 function createHarness() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xiotbox-subagent-'));
@@ -206,6 +214,146 @@ test('does not deliver ordinary agent_end output as a subagent result', () => {
   );
   assert.equal(sent.length, 0);
   unregisterSender();
+});
+
+test('filters out requester-settle placeholder text', () => {
+  const harness = createHarness();
+  const unregisterParent = registerParent();
+  spawnChild();
+  unregisterParent();
+  const sent = [];
+  const unregisterSender = registerDirectSender('default', (params) => {
+    sent.push(params);
+    return { delivered: true, commandId: 'direct-1' };
+  });
+
+  handleSubagentEnded(
+    { targetSessionKey: 'agent:worker:subagent:child-1', targetKind: 'subagent', runId: 'child-run-1', outcome: 'ok' },
+    { runId: 'child-run-1', childSessionKey: 'agent:worker:subagent:child-1', requesterSessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1' },
+  );
+  // The requester-settle agent only produced a hollow placeholder.
+  handleSubagentParentAgentEnd(
+    {
+      runId: 'announce:requester-settle:supervisor:batch-1',
+      success: true,
+      messages: [
+        { role: 'assistant', content: [{ type: 'text', text: '已推送 ✨ 两份调研结果已完成汇总去重并主动发给你了……' }] },
+      ],
+    },
+    { sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1' },
+  );
+
+  assert.equal(sent.length, 0, 'placeholder-only text should not be delivered');
+  unregisterSender();
+  harness.unregisterAccount();
+  fs.rmSync(harness.tempDir, { recursive: true, force: true });
+});
+
+test('collects all assistant messages for requester-settle delivery', () => {
+  const harness = createHarness();
+  const unregisterParent = registerParent();
+  spawnChild();
+  unregisterParent();
+  const sent = [];
+  const unregisterSender = registerDirectSender('default', (params) => {
+    sent.push(params);
+    return { delivered: true, commandId: 'direct-1' };
+  });
+
+  handleSubagentEnded(
+    { targetSessionKey: 'agent:worker:subagent:child-1', targetKind: 'subagent', runId: 'child-run-1', outcome: 'ok' },
+    { runId: 'child-run-1', childSessionKey: 'agent:worker:subagent:child-1', requesterSessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1' },
+  );
+  // Multiple assistant messages — the real summary followed by the placeholder.
+  handleSubagentParentAgentEnd(
+    {
+      runId: 'announce:requester-settle:supervisor:batch-1',
+      success: true,
+      messages: [
+        { role: 'assistant', content: [{ type: 'text', text: 'Heartbeat agent 检测到…' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Embedding provider 共 11 种…' }] },
+        { role: 'assistant', content: [{ type: 'text', text: '已推送 ✨ 两份调研结果已完成汇总去重并主动发给你了……' }] },
+      ],
+    },
+    { sessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1' },
+  );
+
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].text.includes('Heartbeat agent 检测到'));
+  assert.ok(sent[0].text.includes('Embedding provider 共 11 种'));
+  assert.ok(!sent[0].text.includes('已推送'), 'placeholder should be filtered out');
+  unregisterSender();
+  harness.unregisterAccount();
+  fs.rmSync(harness.tempDir, { recursive: true, force: true });
+});
+
+test('emits child tool events with run_id and parent_run_id', () => {
+  const harness = createHarness();
+  const unregisterParent = registerParent();
+  // Spawn a child — this now registers a tool run for the child session.
+  spawnChild();
+  unregisterParent();
+
+  // Simulate a tool call in the child session.
+  handleBeforeToolCall(
+    { toolName: 'exec', toolCallId: 'tc-1', params: { command: 'echo hello' } },
+    { sessionKey: 'agent:worker:subagent:child-1', agentId: 'worker', runId: 'child-run-1', toolCallId: 'tc-1' },
+  );
+
+  // The tool.call event should have been emitted via the subagent lifecycle account.
+  const toolCallEvent = harness.emitted.find((e) => e.kind === 'tool.call');
+  assert.ok(toolCallEvent, 'tool.call event should be emitted for child');
+  assert.equal(toolCallEvent.run_id, 'child-run-1');
+  assert.equal(toolCallEvent.parent_run_id, 'command-1');
+  assert.equal(toolCallEvent.actor.type, 'subagent');
+  assert.equal(toolCallEvent.payload.tool_name, 'exec');
+  assert.equal(toolCallEvent.payload.status, 'running');
+
+  // After the child ends, tool calls should no longer be emitted.
+  handleSubagentEnded(
+    { targetSessionKey: 'agent:worker:subagent:child-1', targetKind: 'subagent', runId: 'child-run-1', outcome: 'ok' },
+    { runId: 'child-run-1', childSessionKey: 'agent:worker:subagent:child-1', requesterSessionKey: 'agent:supervisor:xiotbox:device-1:conversation-1' },
+  );
+
+  const beforeCount = harness.emitted.length;
+  handleBeforeToolCall(
+    { toolName: 'read', toolCallId: 'tc-2', params: { path: '/tmp/x' } },
+    { sessionKey: 'agent:worker:subagent:child-1', agentId: 'worker', runId: 'child-run-1', toolCallId: 'tc-2' },
+  );
+  // No new tool.call event should have been emitted after the child ended.
+  const afterToolCall = harness.emitted.slice(beforeCount).find((e) => e.kind === 'tool.call');
+  assert.equal(afterToolCall, undefined, 'should not emit tool events after child ends');
+
+  harness.unregisterAccount();
+  fs.rmSync(harness.tempDir, { recursive: true, force: true });
+});
+
+test('child tool events do not leak into main session view', () => {
+  const harness = createHarness();
+  const unregisterParent = registerParent();
+  spawnChild();
+  unregisterParent();
+
+  // Simulate a tool call in the child session.
+  handleBeforeToolCall(
+    { toolName: 'exec', toolCallId: 'tc-1', params: { command: 'echo hello' } },
+    { sessionKey: 'agent:worker:subagent:child-1', agentId: 'worker', runId: 'child-run-1', toolCallId: 'tc-1' },
+  );
+  handleAfterToolCall(
+    { toolName: 'exec', toolCallId: 'tc-1', durationMs: 100, result: 'hello' },
+    { sessionKey: 'agent:worker:subagent:child-1', agentId: 'worker', runId: 'child-run-1', toolCallId: 'tc-1' },
+  );
+
+  // All child events carry parent_run_id so the Flutter main view can filter them.
+  for (const event of harness.emitted) {
+    if (event.kind === 'tool.call' || event.kind === 'tool.result') {
+      assert.equal(event.parent_run_id, 'command-1', `child ${event.kind} must have parent_run_id`);
+      assert.equal(event.run_id, 'child-run-1', `child ${event.kind} must have run_id`);
+    }
+  }
+
+  harness.unregisterAccount();
+  fs.rmSync(harness.tempDir, { recursive: true, force: true });
 });
 
 test('preserves a damaged state file and disables projection', () => {

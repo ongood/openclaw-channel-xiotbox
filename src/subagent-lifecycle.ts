@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getDirectSender } from './direct-send.js';
+import { registerActiveToolRun } from './tool-lifecycle.js';
 
 const MAX_CHILD_RUNS = 2000;
 const CHILD_RUN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -85,6 +86,7 @@ type RegisterParentOptions = Omit<ParentRun, 'token'>;
 const accounts = new Map<string, AccountRegistration>();
 const activeParents = new Map<string, Map<symbol, ParentRun>>();
 const childRuns = new Map<string, ChildRun>();
+const childToolUnregisters = new Map<string, () => void>();
 const pendingParentDeliveries = new Map<
   string,
   {
@@ -275,6 +277,16 @@ export function handleSubagentSpawned(
     thread_requested: event?.threadRequested === true,
     status: 'running',
   });
+  // Register a tool run for the child session so that tool.call / tool.result
+  // events are emitted to the Gateway with run_id=childRunId and parent_run_id.
+  const toolUnregister = registerActiveToolRun({
+    sessionKey: childSessionKey,
+    agentId: childAgentId,
+    emit: (kind, payload) => {
+      emitChildEvent(record, kind, payload);
+    },
+  });
+  childToolUnregisters.set(childKey(record.deviceId, childRunId), toolUnregister);
 }
 
 function resolveChild(event: SubagentEndedEvent, ctx: SubagentHookContext): ChildRun | null {
@@ -296,12 +308,15 @@ function logWake(message: string): void {
   }
 }
 
-function extractLatestAssistantText(messages: unknown[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
+function extractAllAssistantText(messages: unknown[]): string {
+  const parts: string[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index] as any;
     if (message?.role !== 'assistant') continue;
     if (typeof message.content === 'string' && message.content.trim()) {
-      return message.content.trim();
+      const text = message.content.trim();
+      if (!isPlaceholderOnly(text)) parts.push(text);
+      continue;
     }
     if (!Array.isArray(message.content)) continue;
     const text = message.content
@@ -309,9 +324,24 @@ function extractLatestAssistantText(messages: unknown[]): string {
       .map((part: any) => part.text)
       .join('\n')
       .trim();
-    if (text) return text;
+    if (text && !isPlaceholderOnly(text)) parts.push(text);
   }
-  return '';
+  return parts.join('\n\n').trim();
+}
+
+// Requester-settle agent may produce a hollow "已推送" placeholder instead of
+// the real summary. Filter it out so we don't send a useless notification.
+const PLACEHOLDER_PATTERNS = [
+  /^已推送/,
+  /已完成汇总去重并主动发给你了/,
+  /^Pushed\b/i,
+  /^Delivered\b/i,
+];
+
+function isPlaceholderOnly(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  return PLACEHOLDER_PATTERNS.some((p) => p.test(trimmed));
 }
 
 export function handleSubagentParentAgentEnd(
@@ -323,12 +353,13 @@ export function handleSubagentParentAgentEnd(
   const sessionKey = normalized(ctx?.sessionKey);
   const pending = pendingParentDeliveries.get(sessionKey);
   if (!pending) return;
-  const text = extractLatestAssistantText(Array.isArray(event?.messages) ? event.messages : []);
-  if (!text || text === 'HEARTBEAT_OK') return;
+  const allText = extractAllAssistantText(Array.isArray(event?.messages) ? event.messages : []);
+  // Skip placeholder-only responses so we don't send a hollow "已推送" message.
+  if (!allText || allText === 'HEARTBEAT_OK' || isPlaceholderOnly(allText)) return;
   const account = accounts.get(pending.deviceId);
   const sender = getDirectSender(account?.accountId || 'default');
   const result = sender?.({
-    text,
+    text: allText,
     commandId: pending.parentRunId,
     threadId: pending.threadId,
     traceId: pending.traceId,
@@ -356,6 +387,12 @@ export function handleSubagentEnded(event: SubagentEndedEvent, ctx: SubagentHook
     ended_at: Number.isFinite(Number(event?.endedAt)) ? Number(event?.endedAt) : undefined,
   });
   if (!emitted) return;
+  // Unregister child tool run so the session map is cleaned up.
+  const toolUnregister = childToolUnregisters.get(childKey(record.deviceId, record.childRunId));
+  if (toolUnregister) {
+    toolUnregister();
+    childToolUnregisters.delete(childKey(record.deviceId, record.childRunId));
+  }
   childRuns.delete(childKey(record.deviceId, record.childRunId));
   const parentSessionKey = requesterSessionKey || normalized(record.parentSessionKey);
   const hasPendingSibling = [...childRuns.values()].some(
@@ -380,5 +417,6 @@ export function resetSubagentLifecycleForTest(): void {
   accounts.clear();
   activeParents.clear();
   childRuns.clear();
+  childToolUnregisters.clear();
   pendingParentDeliveries.clear();
 }
