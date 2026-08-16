@@ -4,6 +4,7 @@ import { setXiotboxRuntime } from './src/runtime.js';
 import { handleMemoryAfterToolCall, handleMemoryAgentEvent } from './src/memory-lifecycle.js';
 import { handleSubagentEnded, handleSubagentSpawned } from './src/subagent-lifecycle.js';
 import { handleAfterToolCall, handleBeforeToolCall } from './src/tool-lifecycle.js';
+import { handleBeforeModelResolve } from './src/session-model.js';
 import { createXiotboxControlTool } from './src/xiotbox-control-tool.js';
 
 type XiotboxPluginApi = {
@@ -68,6 +69,7 @@ export default {
     api.on('after_tool_call', handleMemoryAfterToolCall);
     api.on('subagent_spawned', handleSubagentSpawned);
     api.on('subagent_ended', handleSubagentEnded);
+    api.on('before_model_resolve', handleBeforeModelResolve);
     const memorySubscription = {
       id: 'xiotbox-memory-lifecycle',
       description: 'Project redacted memory tool lifecycle events to XiotBox Gateway.',

@@ -29,6 +29,7 @@ import {
   registerSubagentLifecycleAccount,
 } from './subagent-lifecycle.js';
 import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js';
+import { setSessionModelOverride } from './session-model.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import {
   clearConnectedAt,
@@ -2023,6 +2024,11 @@ export const xiotboxPlugin = {
           const inboundPermission = incoming?.metadata?.permission;
           if (inboundPermission === 'readonly' || inboundPermission === 'full') {
             setSessionPermission(sessionKey, inboundPermission);
+          }
+          // 客户端随消息带上 model（provider/model），会话级覆盖本轮模型选择。
+          const inboundModel = incoming?.metadata?.model;
+          if (inboundModel) {
+            setSessionModelOverride(sessionKey, String(inboundModel));
           }
           if (conversationBinding) {
             lifecycleContext = {

@@ -11,6 +11,7 @@ import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import { registerActiveMemoryBinding, registerMemoryLifecycleAccount, } from './memory-lifecycle.js';
 import { registerActiveSubagentParent, registerSubagentLifecycleAccount, } from './subagent-lifecycle.js';
 import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js';
+import { setSessionModelOverride } from './session-model.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import { clearConnectedAt, describeGatewayAccountState, getGatewayAccount, nextGatewayInstanceId, registerGatewayAccount, removeGatewayAccount, setConnectedAt, stopGatewayAccount, } from './gateway-state.js';
 import { buildConfig, buildSessionKey, CHANNEL_ID, getChannelConfig, listAccountIds, normalizeAccountId, normalizeAgentId, normalizeContextEpoch, normalizePositiveInt, normalizeStringValue, normalizeThreadId, resolveAccount, resolveAgentId, resolveDefaultAccountId, resolveConversationBinding, resolveEffectiveConfig, resolveThreadAgentId, } from './config.js';
@@ -1751,6 +1752,11 @@ export const xiotboxPlugin = {
                     const inboundPermission = incoming?.metadata?.permission;
                     if (inboundPermission === 'readonly' || inboundPermission === 'full') {
                         setSessionPermission(sessionKey, inboundPermission);
+                    }
+                    // 客户端随消息带上 model（provider/model），会话级覆盖本轮模型选择。
+                    const inboundModel = incoming?.metadata?.model;
+                    if (inboundModel) {
+                        setSessionModelOverride(sessionKey, String(inboundModel));
                     }
                     if (conversationBinding) {
                         lifecycleContext = {
