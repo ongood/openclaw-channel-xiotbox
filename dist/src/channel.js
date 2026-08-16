@@ -1295,11 +1295,30 @@ export const xiotboxPlugin = {
     },
     reload: { configPrefixes: ['channels.xiotbox'] },
     approvalCapability: xiotboxApprovalCapability,
+    messaging: {
+        targetResolver: {
+            looksLikeId: (raw) => Boolean(raw && raw.trim()),
+            resolveTarget: async (params) => {
+                const to = String(params?.normalized ?? '').trim();
+                if (!to)
+                    return null;
+                // XiotBox is a single-device direct channel: any conversation/thread id
+                // resolves to a direct "user" target for that conversation. The actual
+                // wire routing uses threadId via the direct-send path.
+                return { to, kind: 'user', source: 'normalized' };
+            },
+        },
+    },
     outbound: {
         deliveryMode: 'direct',
         sendText: async (ctx) => {
+            try {
+                console.error(`[xiotbox-send] sendText called to=${ctx?.to} threadId=${ctx?.threadId} accountId=${ctx?.accountId}`);
+            }
+            catch { }
             const sender = getDirectSender(ctx?.accountId || 'default');
             if (!sender) {
+                console.error('[xiotbox-send] NO DIRECT SENDER');
                 throw new Error('xiotbox outbound sender unavailable');
             }
             const result = sender({
@@ -1307,6 +1326,10 @@ export const xiotboxPlugin = {
                 threadId: ctx?.threadId ? String(ctx.threadId) : undefined,
                 traceId: ctx?.identity?.id || null,
             });
+            try {
+                console.error(`[xiotbox-send] result delivered=${result.delivered} error=${result.error || ''}`);
+            }
+            catch { }
             if (!result.delivered) {
                 throw new Error(result.error || 'xiotbox outbound delivery failed');
             }
