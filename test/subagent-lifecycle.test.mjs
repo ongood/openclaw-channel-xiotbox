@@ -171,9 +171,9 @@ test('wakes the parent supervisor session when a subagent completes', () => {
     );
 
     assert.equal(wakes.length, 1);
-    assert.equal(wakes[0].source, 'background-task');
+    assert.equal(wakes[0].source, 'notifications-event');
     assert.equal(wakes[0].intent, 'immediate');
-    assert.equal(wakes[0].reason, 'subagent-completed');
+    assert.equal(wakes[0].reason, 'wake');
     assert.equal(wakes[0].sessionKey, 'agent:supervisor:xiotbox:device-1:conversation-1');
     assert.equal(wakes[0].agentId, 'supervisor');
   } finally {

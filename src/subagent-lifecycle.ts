@@ -338,9 +338,12 @@ function requestParentSupervisorWake(params: {
   }
   try {
     requestHeartbeat({
-      source: 'background-task',
+      // `notifications-event` is accepted as a targeted one-shot wake even
+      // when the parent agent's recurring heartbeat is disabled. Older
+      // OpenClaw 2026.8 builds do not grant that exception to background-task.
+      source: 'notifications-event',
       intent: 'immediate',
-      reason: 'subagent-completed',
+      reason: 'wake',
       ...(params.parentAgentId ? { agentId: params.parentAgentId } : {}),
       sessionKey: requesterSessionKey,
     });
