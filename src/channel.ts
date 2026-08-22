@@ -71,6 +71,14 @@ const SESSION_STORE_CACHE_TTL_MS = 3000;
 const CONTEXT_EPOCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CONTEXT_EPOCH_CACHE_MAX = 2000;
 
+// Content-level deduplication: catches the case where the same user message is
+// re-sent with a different command_id (e.g. client retry after ACK timeout).
+// The commandCache alone only dedups by exact command_id; if the gateway or
+// client re-issues the same payload with a new id, it would bypass that cache
+// and trigger duplicate OpenClaw dispatches.
+const CONTENT_DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CONTENT_DEDUP_MAX = 1000;
+
 type SessionUsageSnapshot = {
   totalTokens: number;
   inputTokens?: number;
@@ -140,6 +148,82 @@ type GatewayStartContextLike = GatewayContextLike & {
 
 let sessionStoreCache: SessionStoreCache | null = null;
 const contextEpochCache = new Map<string, ContextEpochCacheEntry>();
+
+// ── Content-level deduplication ──
+type ContentDedupEntry = {
+  payload: any;
+  originalCmdId: string;
+  sessionKey: string;
+  processedAt: number;
+};
+
+const contentDedupCache = new Map<string, ContentDedupEntry>();
+
+// FNV-1a inspired hash — avoids pulling in crypto module just for a dedup key.
+function contentFingerprint(input: string): string {
+  let h1 = 0xdeadbeef >>> 0;
+  let h2 = 0x41c6ce57 >>> 0;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 ^= h2 >>> 16;
+  h1 = Math.imul(h1 ^ h2, 2246822507) >>> 0;
+  return h1.toString(16);
+}
+
+function contentDedupKey(sessionKey: string, text: string): string {
+  const normalized = (text || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, 512);
+  const hash = contentFingerprint(`${sessionKey}:${normalized}`);
+  return `cd_${hash}:${sessionKey.slice(0, 12)}`;
+}
+
+// Exported for testing
+export {
+  contentDedupKey,
+  getCachedByContent,
+  setCachedByContent,
+  contentDedupCache,
+};
+
+function pruneContentDedupCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of contentDedupCache.entries()) {
+    if (now - entry.processedAt > CONTENT_DEDUP_TTL_MS) {
+      contentDedupCache.delete(key);
+    }
+  }
+  while (contentDedupCache.size > CONTENT_DEDUP_MAX) {
+    const firstKey = contentDedupCache.keys().next().value;
+    contentDedupCache.delete(firstKey);
+  }
+}
+
+function getCachedByContent(sessionKey: string, text: string): ContentDedupEntry | null {
+  pruneContentDedupCache();
+  const key = contentDedupKey(sessionKey, text);
+  return contentDedupCache.get(key) || null;
+}
+
+function setCachedByContent(
+  sessionKey: string,
+  text: string,
+  payload: any,
+  cmdId: string,
+): void {
+  pruneContentDedupCache();
+  const key = contentDedupKey(sessionKey, text);
+  contentDedupCache.set(key, {
+    payload,
+    originalCmdId: cmdId,
+    sessionKey,
+    processedAt: Date.now(),
+  });
+}
 
 function getChannelRuntimeSurface(ctx: GatewayContextLike): GatewayContextLike['channelRuntime'] | null {
   return ctx?.channelRuntime || null;
@@ -2078,6 +2162,37 @@ export const xiotboxPlugin = {
           if (inboundModel) {
             setSessionModelOverride(sessionKey, String(inboundModel));
           }
+
+          // ── Content-level deduplication ──
+          // Catches the case where the same user message is re-sent with a
+          // different command_id (client retry after ACK timeout, gateway
+          // re-delivery, etc.). The commandCache only dedups by exact cmdId;
+          // this layer dedups by (sessionKey + normalizedText) within a TTL.
+          if (text) {
+            const contentCached = getCachedByContent(sessionKey, text);
+            if (contentCached) {
+              log?.warn?.(JSON.stringify({
+                event: 'content_dedup_hit',
+                trace_id: traceId || '',
+                message_id: cmdId,
+                session_key: sessionKey,
+                thread_id: threadId,
+                original_message_id: contentCached.originalCmdId,
+              }));
+              const dedupPayload = {
+                command_id: cmdId,
+                status: contentCached.payload?.status || 'success',
+                trace_id: traceId,
+                result: contentCached.payload?.result || {},
+                dedup_source: 'content_duplicate',
+              };
+              client.sendMessage('COMMAND_RESULT', dedupPayload);
+              setCached(cmdId, dedupPayload);
+              setCachedByContent(sessionKey, text, dedupPayload, cmdId);
+              return;
+            }
+          }
+
           if (conversationBinding) {
             lifecycleContext = {
               bindingId: conversationBinding.bindingId,
@@ -2746,6 +2861,7 @@ export const xiotboxPlugin = {
               });
               client.sendMessage('COMMAND_RESULT', failPayload);
               setCached(cmdId, failPayload);
+              setCachedByContent(sessionKey, text, failPayload, cmdId);
               return;
             }
 
@@ -2852,6 +2968,7 @@ export const xiotboxPlugin = {
             session_usage: sessionUsageSnapshot || undefined,
           });
           setCached(cmdId, successPayload);
+          setCachedByContent(sessionKey, text, successPayload, cmdId);
         } catch (err: any) {
           log?.error?.(JSON.stringify({
             event: 'command_handler_error',
