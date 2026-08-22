@@ -21,6 +21,10 @@ import {
 import { handleAgentProfileSync } from './agent-profile-sync.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import {
+  projectAssistantMessage,
+  projectUserMessage,
+} from './conversation-projection.js';
+import {
   registerActiveMemoryBinding,
   registerMemoryLifecycleAccount,
 } from './memory-lifecycle.js';
@@ -2082,6 +2086,13 @@ export const xiotboxPlugin = {
               runId: cmdId,
               traceId,
             };
+            for (const projection of projectUserMessage(text, incoming?.metadata)) {
+              emitLifecycleEvent(
+                projection.kind,
+                projection.payload,
+                projection.occurrenceId,
+              );
+            }
             emitLifecycleEvent('run.started', {
               status: 'running',
               agent_profile_id: conversationBinding.agentProfileId,
@@ -2154,6 +2165,17 @@ export const xiotboxPlugin = {
               ),
             };
             client.sendMessage('COMMAND_RESULT', successPayload);
+            for (const projection of projectAssistantMessage(
+              'Exited control mode and switched back to chat mode. Continue with text-only conversation. If control is needed again, ask with a new operation request.',
+              '',
+              incoming?.metadata,
+            )) {
+              emitLifecycleEvent(
+                projection.kind,
+                projection.payload,
+                projection.occurrenceId,
+              );
+            }
             emitLifecycleEvent('run.completed', {
               status: 'completed',
               mode: 'text_only_exit',
@@ -2814,6 +2836,17 @@ export const xiotboxPlugin = {
             }),
           };
           client.sendMessage('COMMAND_RESULT', successPayload);
+          for (const projection of projectAssistantMessage(
+            resolvedFinalText,
+            thinkingSnapshotText,
+            incoming?.metadata,
+          )) {
+            emitLifecycleEvent(
+              projection.kind,
+              projection.payload,
+              projection.occurrenceId,
+            );
+          }
           emitLifecycleEvent('run.completed', {
             status: 'completed',
             session_usage: sessionUsageSnapshot || undefined,
