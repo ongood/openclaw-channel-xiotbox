@@ -16,9 +16,21 @@ function normalizedMetadata(value: unknown): Record<string, unknown> | undefined
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+// Projection payloads always carry the originating command_id so the client can
+// reconcile the echoed timeline event with its local optimistic message
+// (sent under the same command_id). Without it the client falls back to parsing
+// event_id, which does not round-trip to the original command id, and the local
+// optimistic bubble is never hidden, producing a visible duplicate in the live
+// timeline (the duplicate disappears on re-entry because local state resets).
+function commandIdField(commandId?: unknown): Record<string, unknown> {
+  const normalized = typeof commandId === 'string' ? commandId.trim() : '';
+  return normalized ? { command_id: normalized } : {};
+}
+
 export function projectUserMessage(
   text: unknown,
   metadata?: unknown,
+  commandId?: unknown,
 ): ConversationProjection[] {
   const normalized = normalizedText(text);
   if (!normalized) return [];
@@ -29,6 +41,7 @@ export function projectUserMessage(
     payload: {
       text: normalized,
       ...(projectedMetadata ? { metadata: projectedMetadata } : {}),
+      ...commandIdField(commandId),
     },
   }];
 }
@@ -37,6 +50,7 @@ export function projectAssistantMessage(
   text: unknown,
   reasoning?: unknown,
   metadata?: unknown,
+  commandId?: unknown,
 ): ConversationProjection[] {
   const normalized = normalizedText(text);
   const normalizedReasoning = normalizedText(reasoning);
@@ -49,6 +63,7 @@ export function projectAssistantMessage(
       payload: {
         text: normalized,
         ...(projectedMetadata ? { metadata: projectedMetadata } : {}),
+        ...commandIdField(commandId),
       },
     });
   }
@@ -56,7 +71,10 @@ export function projectAssistantMessage(
     events.push({
       kind: 'reasoning.block',
       occurrenceId: 'reasoning:final',
-      payload: { text: normalizedReasoning },
+      payload: {
+        text: normalizedReasoning,
+        ...commandIdField(commandId),
+      },
     });
   }
   return events;

@@ -44,3 +44,21 @@ test('projects final assistant text and reasoning before run completion', () => 
 test('does not create empty timeline bubbles', () => {
   assert.deepEqual(projectAssistantMessage('', ''), []);
 });
+
+test('carries command_id in user message payload for optimistic-message reconciliation', () => {
+  const result = projectUserMessage('hello', undefined, 'cmd_1787404185592_0');
+  assert.equal(result[0].payload.command_id, 'cmd_1787404185592_0');
+});
+
+test('carries command_id in assistant and reasoning payloads', () => {
+  const result = projectAssistantMessage('answer', 'thought', undefined, 'cmd_1787404185592_0');
+  assert.equal(result[0].payload.command_id, 'cmd_1787404185592_0');
+  assert.equal(result[1].payload.command_id, 'cmd_1787404185592_0');
+});
+
+test('omits command_id when not provided', () => {
+  const user = projectUserMessage('hello');
+  assert.equal(user[0].payload.command_id, undefined);
+  const assistant = projectAssistantMessage('answer', 'thought');
+  assert.equal(assistant[0].payload.command_id, undefined);
+});

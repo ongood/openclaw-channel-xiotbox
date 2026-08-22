@@ -2201,7 +2201,7 @@ export const xiotboxPlugin = {
               runId: cmdId,
               traceId,
             };
-            for (const projection of projectUserMessage(text, incoming?.metadata)) {
+            for (const projection of projectUserMessage(text, incoming?.metadata, cmdId)) {
               emitLifecycleEvent(
                 projection.kind,
                 projection.payload,
@@ -2284,6 +2284,7 @@ export const xiotboxPlugin = {
               'Exited control mode and switched back to chat mode. Continue with text-only conversation. If control is needed again, ask with a new operation request.',
               '',
               incoming?.metadata,
+              cmdId,
             )) {
               emitLifecycleEvent(
                 projection.kind,
@@ -2956,6 +2957,7 @@ export const xiotboxPlugin = {
             resolvedFinalText,
             thinkingSnapshotText,
             incoming?.metadata,
+            cmdId,
           )) {
             emitLifecycleEvent(
               projection.kind,

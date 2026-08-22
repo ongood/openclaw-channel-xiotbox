@@ -1893,7 +1893,7 @@ export const xiotboxPlugin = {
                             runId: cmdId,
                             traceId,
                         };
-                        for (const projection of projectUserMessage(text, incoming?.metadata)) {
+                        for (const projection of projectUserMessage(text, incoming?.metadata, cmdId)) {
                             emitLifecycleEvent(projection.kind, projection.payload, projection.occurrenceId);
                         }
                         emitLifecycleEvent('run.started', {
@@ -1956,7 +1956,7 @@ export const xiotboxPlugin = {
                             result: buildEncryptedResult('Exited control mode and switched back to chat mode. Continue with text-only conversation. If control is needed again, ask with a new operation request.', hardExitChunkSeq, resolveSessionUsageSnapshot(fullConfig, sessionKey)),
                         };
                         client.sendMessage('COMMAND_RESULT', successPayload);
-                        for (const projection of projectAssistantMessage('Exited control mode and switched back to chat mode. Continue with text-only conversation. If control is needed again, ask with a new operation request.', '', incoming?.metadata)) {
+                        for (const projection of projectAssistantMessage('Exited control mode and switched back to chat mode. Continue with text-only conversation. If control is needed again, ask with a new operation request.', '', incoming?.metadata, cmdId)) {
                             emitLifecycleEvent(projection.kind, projection.payload, projection.occurrenceId);
                         }
                         emitLifecycleEvent('run.completed', {
@@ -2574,7 +2574,7 @@ export const xiotboxPlugin = {
                         }),
                     };
                     client.sendMessage('COMMAND_RESULT', successPayload);
-                    for (const projection of projectAssistantMessage(resolvedFinalText, thinkingSnapshotText, incoming?.metadata)) {
+                    for (const projection of projectAssistantMessage(resolvedFinalText, thinkingSnapshotText, incoming?.metadata, cmdId)) {
                         emitLifecycleEvent(projection.kind, projection.payload, projection.occurrenceId);
                     }
                     emitLifecycleEvent('run.completed', {
