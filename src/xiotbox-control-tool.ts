@@ -332,7 +332,7 @@ export function createXiotboxControlTool(options: ControlToolOptions = {}) {
         const actionId = String(forcedActionId || '').trim() || uuid();
         const dispatch = await jsonRpcCall(
           apiBaseUrl,
-          '/openclaw/device/control/dispatch',
+          '/agent/device/control/dispatch',
           {
             target_device_id: targetDeviceId,
             action,
@@ -367,7 +367,7 @@ export function createXiotboxControlTool(options: ControlToolOptions = {}) {
         while (Date.now() < pollDeadline) {
           const statusRes = await jsonRpcCall(
             apiBaseUrl,
-            '/openclaw/device/control/status',
+            '/agent/device/control/status',
             { command_id: commandId },
             headers,
             httpTimeoutMs,

@@ -91,7 +91,7 @@ async function pair(config) {
         throw new Error('GATEWAY_API_URL not configured');
     }
 
-    const pairUrl = `${apiUrl}/openclaw/pair/exchange`;
+    const pairUrl = `${apiUrl}/agent/pair/exchange`;
 
     console.log('[Pairing] Exchanging pair_code for device_token...');
     console.log('[Pairing] Gateway:', apiUrl);
