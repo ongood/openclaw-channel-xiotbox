@@ -25,7 +25,7 @@ Examples:
   # xiotbox + deepseek model config
   bash scripts/bootstrap_xiotbox_termux.sh \
     wss://socketd.odoo.games/ws/openclaw <DEVICE_ID> <DEVICE_TOKEN> \
-  https://api.xiotbox.com 4.0.18 1 <MODEL_API_KEY> deepseek-chat
+  https://api.xiotbox.com 4.0.19 1 <MODEL_API_KEY> deepseek-chat
 
 Notes:
   - MODEL_API_KEY: pass '-' to skip model setup.
@@ -43,7 +43,7 @@ GATEWAY_WSS_URL="${1:-}"
 DEVICE_ID="${2:-}"
 DEVICE_TOKEN="${3:-}"
 XIOTBOX_API_BASE_URL="${4:-https://api.xiotbox.com}"
-TAG_OR_REPO="${5:-4.0.18}"
+TAG_OR_REPO="${5:-4.0.19}"
 ALLOW_NEW_CLIENT_IDENTITIES="${6:-1}"
 MODEL_API_KEY="${7:--}"
 MODEL_OR_FULL_MODEL="${8:-deepseek-chat}"
