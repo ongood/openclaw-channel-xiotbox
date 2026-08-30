@@ -155,6 +155,37 @@ function settleSessionArchive(conversationId, ok, error) {
     });
     return true;
 }
+// ── Runtime visibility (XIOT-BUG-0007) ──
+// The OpenClaw channel must present itself to the gateway as a first-class
+// runtime, otherwise /v2/runtimes and orchestrator dispatch only ever see
+// DSH. Payload contract matches gateway bot_ws._handle_runtimes_list;
+// runtime_kind is declared explicitly because the gateway default is neutral
+// by design (XIOT-BUG-0001 showed the cost of implicit runtime identity).
+// workspaces stay empty until an OpenClaw workspace seam is specified; local
+// paths never leave the bot.
+export const OPENCLAW_RUNTIME_KIND = 'openclaw';
+export function buildOpenclawRuntimeId(deviceId) {
+    const normalized = String(deviceId || '').trim();
+    return normalized ? `openclaw-${normalized}` : '';
+}
+export function buildOpenclawRuntimeListPayload(deviceId) {
+    const normalized = String(deviceId || '').trim();
+    const runtimeId = buildOpenclawRuntimeId(normalized);
+    return {
+        device_id: normalized,
+        runtimes: runtimeId
+            ? [
+                {
+                    runtime_id: runtimeId,
+                    runtime_kind: OPENCLAW_RUNTIME_KIND,
+                    name: `OpenClaw (${normalized})`,
+                    status: 'online',
+                    workspaces: [],
+                },
+            ]
+            : [],
+    };
+}
 function resolveInboundContextEpoch(params) {
     const { incoming, deviceId, threadId, traceId, messageId, log } = params;
     const scopeKey = contextEpochScopeKey(deviceId, threadId);
@@ -2762,6 +2793,9 @@ export const xiotboxPlugin = {
                 e2e.refreshPeerKey().catch((err) => {
                     log?.warn?.(`[XiotBox][${accountId}] E2E peer key refresh failed: ${err?.message || err}`);
                 });
+                // Runtime visibility (XIOT-BUG-0007): publish the openclaw runtime so
+                // /v2/runtimes and orchestrator dispatch see this device as openclaw.
+                client.sendMessage('RUNTIMES.LIST', buildOpenclawRuntimeListPayload(finalCfg.DEVICE_ID));
                 eventOutbox.flushDue(true);
             });
             client.on('V2.EVENT_ACK', (ack) => {
