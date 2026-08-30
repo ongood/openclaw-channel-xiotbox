@@ -352,6 +352,12 @@ class WSSClient extends EventEmitter {
                 this.emit('SESSION.ARCHIVE_ACK', payload);
                 break;
 
+            case 'SESSION.REGISTER_ACK':
+                // Gateway acknowledges a SESSION.REGISTER upsert; channel.ts
+                // logs failures for observability only.
+                this.emit('SESSION.REGISTER_ACK', payload);
+                break;
+
             case 'ERROR':
                 console.error('[WSS] Server error:', payload);
                 if (payload.code === 'REAUTH_REQUIRED') {

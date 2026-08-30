@@ -1788,6 +1788,32 @@ export const xiotboxPlugin = {
             client.on('SESSION.ARCHIVE_ACK', (ackPayload) => {
                 settleSessionArchiveAck(ackPayload);
             });
+            // ── SESSION.REGISTER (XIOT-BUG-0007) ──
+            // Registers each bound conversation with the gateway so bot-side
+            // OpenClaw sessions appear in the conversation list. The gateway
+            // derives the same session_key shape as the client binding path and
+            // never clobbers an existing client binding (conversation_id UNIQUE).
+            const sessionRegisterSent = new Set();
+            const sendSessionRegister = (entry) => {
+                const conversationId = String(entry.conversationId || '').trim();
+                if (!conversationId || sessionRegisterSent.has(conversationId))
+                    return;
+                sessionRegisterSent.add(conversationId);
+                client.sendMessage('SESSION.REGISTER', {
+                    runtime_kind: OPENCLAW_RUNTIME_KIND,
+                    session_id: conversationId,
+                    conversation_id: conversationId,
+                    agent_id: entry.agentId,
+                    context_epoch: entry.contextEpoch,
+                    projection_version: 1,
+                });
+            };
+            client.on('SESSION.REGISTER_ACK', (ackPayload) => {
+                const data = ackPayload?.payload || ackPayload || {};
+                if (data.ok === false) {
+                    log?.warn?.(`[XiotBox] SESSION.REGISTER failed conversation=${String(data.conversation_id || '')} error=${String(data.error || 'unknown')}`);
+                }
+            });
             client.on('COMMAND', async (payload) => {
                 let lifecycleContext = null;
                 const emitLifecycleEvent = (kind, eventPayload, occurrenceId = kind) => {
@@ -2016,6 +2042,13 @@ export const xiotboxPlugin = {
                     if (conversationBinding?.conversationId) {
                         rememberConversationBinding(conversationBinding.conversationId, {
                             sessionKey,
+                            agentId,
+                            contextEpoch,
+                        });
+                        // Runtime visibility (XIOT-BUG-0007): publish the bound
+                        // conversation to the gateway (idempotent upsert).
+                        sendSessionRegister({
+                            conversationId: conversationBinding.conversationId,
                             agentId,
                             contextEpoch,
                         });
@@ -2796,6 +2829,16 @@ export const xiotboxPlugin = {
                 // Runtime visibility (XIOT-BUG-0007): publish the openclaw runtime so
                 // /v2/runtimes and orchestrator dispatch see this device as openclaw.
                 client.sendMessage('RUNTIMES.LIST', buildOpenclawRuntimeListPayload(finalCfg.DEVICE_ID));
+                // Re-register known conversation bindings after a reconnect; the
+                // gateway upsert is idempotent and never clobbers client bindings.
+                for (const [conversationId, known] of conversationBindingRegistry.entries()) {
+                    sessionRegisterSent.delete(conversationId);
+                    sendSessionRegister({
+                        conversationId,
+                        agentId: known.agentId,
+                        contextEpoch: known.contextEpoch,
+                    });
+                }
                 eventOutbox.flushDue(true);
             });
             client.on('V2.EVENT_ACK', (ack) => {
