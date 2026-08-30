@@ -1,93 +1,63 @@
-// Regression test: content-level deduplication must catch the case where the
-// same user message is re-sent with a different command_id (client retry after
-// ACK timeout, gateway re-delivery, etc.). Without this layer the existing
-// commandCache only dedups by exact command_id, so duplicates with unique ids
-// bypass it and trigger duplicate OpenClaw dispatches.
+// Contract regression test for XIOT-BUG-0005.
+//
+// command_id is the sole run identity. The channel must NOT replay a cached
+// COMMAND_RESULT when the same text arrives under a different command_id:
+// that silently swallows legitimate user re-sends ("继续" / "retry").
+//
+// The content-level dedup layer (contentDedupCache / getCachedByContent /
+// setCachedByContent / contentDedupKey) was therefore removed entirely.
+// Idempotency remains only at the exact command_id level via the internal
+// commandCache, which is intentionally not exported.
+//
+// This file guards the removal: none of the content-level dedup symbols may
+// come back on the channel module surface, and the built artifact must not
+// contain the old replay path.
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  contentDedupKey,
-  getCachedByContent,
-  setCachedByContent,
-  contentDedupCache,
-} from '../dist/src/channel.js';
+import { readFileSync } from 'node:fs';
 
-// Helper: clear the shared cache between tests to avoid cross-test pollution.
-function resetContentDedupCache() {
-  contentDedupCache.clear();
-}
+import * as channel from '../dist/src/channel.js';
 
-test('contentDedupKey is deterministic for same session+text', () => {
-  resetContentDedupCache();
-  const k1 = contentDedupKey('agent:main:xiotbox:dev1:conv1', 'Hello world');
-  const k2 = contentDedupKey('agent:main:xiotbox:dev1:conv1', 'Hello world');
-  assert.strictEqual(k1, k2);
+const REMOVED_SYMBOLS = [
+  'contentDedupKey',
+  'getCachedByContent',
+  'setCachedByContent',
+  'contentDedupCache',
+];
+
+test('content-level dedup API is removed from the channel module surface', () => {
+  for (const symbol of REMOVED_SYMBOLS) {
+    assert.strictEqual(
+      channel[symbol],
+      undefined,
+      `channel.js unexpectedly exports removed symbol: ${symbol}`,
+    );
+  }
 });
 
-test('contentDedupKey differs for different text', () => {
-  resetContentDedupCache();
-  const k1 = contentDedupKey('agent:main:xiotbox:dev1:conv1', 'Hello world');
-  const k2 = contentDedupKey('agent:main:xiotbox:dev1:conv1', 'Goodbye world');
-  assert.notStrictEqual(k1, k2);
+test('built channel.js no longer contains the content replay path', () => {
+  const built = readFileSync(
+    new URL('../dist/src/channel.js', import.meta.url),
+    'utf8',
+  );
+  for (const marker of [
+    'content_dedup_hit',
+    'content_duplicate',
+    'getCachedByContent',
+    'setCachedByContent',
+  ]) {
+    assert.ok(
+      !built.includes(marker),
+      `dist/src/channel.js still contains removed marker: ${marker}`,
+    );
+  }
 });
 
-test('contentDedupKey differs for different session', () => {
-  resetContentDedupCache();
-  const k1 = contentDedupKey('agent:main:xiotbox:dev1:conv1', 'Hello world');
-  const k2 = contentDedupKey('agent:main:xiotbox:dev1:conv2', 'Hello world');
-  assert.notStrictEqual(k1, k2);
-});
-
-test('contentDedupKey normalizes whitespace', () => {
-  resetContentDedupCache();
-  const k1 = contentDedupKey('sess', 'Hello   world');
-  const k2 = contentDedupKey('sess', 'Hello world');
-  assert.strictEqual(k1, k2);
-});
-
-test('getCachedByContent returns null for unseen content', () => {
-  resetContentDedupCache();
-  const result = getCachedByContent('sess', 'new message');
-  assert.strictEqual(result, null);
-});
-
-test('getCachedByContent returns cached payload for duplicate content', () => {
-  resetContentDedupCache();
-  const sessionKey = 'agent:main:xiotbox:dev1:conv1';
-  const text = 'Hello world';
-  const originalPayload = { command_id: 'cmd_001', status: 'success', result: { foo: 'bar' } };
-
-  setCachedByContent(sessionKey, text, originalPayload, 'cmd_001');
-  const cached = getCachedByContent(sessionKey, text);
-  assert.ok(cached);
-  assert.deepEqual(cached.payload, originalPayload);
-  assert.strictEqual(cached.originalCmdId, 'cmd_001');
-});
-
-test('getCachedByContent is session-scoped', () => {
-  resetContentDedupCache();
-  const sess1 = 'agent:main:xiotbox:dev1:conv1';
-  const sess2 = 'agent:main:xiotbox:dev1:conv2';
-  const text = 'Hello world';
-  const payload = { command_id: 'cmd_001', status: 'success' };
-
-  setCachedByContent(sess1, text, payload, 'cmd_001');
-  const hit = getCachedByContent(sess1, text);
-  const miss = getCachedByContent(sess2, text);
-  assert.ok(hit);
-  assert.strictEqual(miss, null);
-});
-
-test('getCachedByContent returns null for different text', () => {
-  resetContentDedupCache();
-  const sessionKey = 'agent:main:xiotbox:dev1:conv1';
-  const text1 = 'Hello world';
-  const text2 = 'Different message';
-  const payload = { command_id: 'cmd_001', status: 'success' };
-
-  setCachedByContent(sessionKey, text1, payload, 'cmd_001');
-  const hit = getCachedByContent(sessionKey, text1);
-  const miss = getCachedByContent(sessionKey, text2);
-  assert.ok(hit);
-  assert.strictEqual(miss, null);
+test('channel module still exports its public surface after the removal', () => {
+  const exported = Object.keys(channel);
+  assert.ok(
+    exported.length > 0,
+    `channel.js exports collapsed: [${exported.join(', ')}]`,
+  );
 });
