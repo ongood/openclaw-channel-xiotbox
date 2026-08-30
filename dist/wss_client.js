@@ -4,7 +4,6 @@ import os from 'os';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
-
 const require = createRequire(import.meta.url);
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const packageCandidates = path.basename(moduleDir) === 'dist'
@@ -15,11 +14,11 @@ for (const candidate of packageCandidates) {
     try {
         pkg = require(candidate);
         break;
-    } catch (err) {
+    }
+    catch (err) {
         // Try the next package metadata location.
     }
 }
-
 /**
  * WSS client.
  * Manages the WebSocket connection to XiotBox Gateway.
@@ -29,11 +28,11 @@ class WSSClient extends EventEmitter {
         super();
         this.config = config;
         this.ws = null;
-        this.seq = 0;  // Message sequence number
-        this.reconnectDelay = 1000;  // Initial reconnect delay: 1 second
-        this.maxReconnectDelay = 60000;  // Max reconnect delay: 60 seconds
+        this.seq = 0; // Message sequence number
+        this.reconnectDelay = 1000; // Initial reconnect delay: 1 second
+        this.maxReconnectDelay = 60000; // Max reconnect delay: 60 seconds
         this.heartbeatInterval = null;
-        this.isManualDisconnect = false;  // Whether the disconnect was intentional
+        this.isManualDisconnect = false; // Whether the disconnect was intentional
         this.outbox = [];
         this.maxOutbox = config.OUTBOX_MAX || 200;
         this.outboxTtlMs = config.OUTBOX_TTL_MS || 5 * 60 * 1000;
@@ -49,7 +48,6 @@ class WSSClient extends EventEmitter {
         this.parseWarnSuppressed = 0;
         this.lastParseWarnAt = 0;
     }
-
     /**
      * Connect to the Gateway.
      */
@@ -60,29 +58,26 @@ class WSSClient extends EventEmitter {
         if (this.connectPromise) {
             return this.connectPromise;
         }
-
         this.isManualDisconnect = false;
         this._clearReconnectTimer();
         const connectEpoch = ++this.socketEpoch;
-
         this.connectPromise = new Promise((resolve, reject) => {
             let settled = false;
             const finishResolve = () => {
-                if (settled) return;
+                if (settled)
+                    return;
                 settled = true;
                 resolve();
             };
             const finishReject = (err) => {
-                if (settled) return;
+                if (settled)
+                    return;
                 settled = true;
                 reject(err);
             };
-
             // Build the WSS URL, optionally including device credentials.
             const url = this._buildWsUrl();
-
             console.log('[WSS] Connecting to gateway...');
-
             const ws = new WebSocket(url, {
                 headers: {
                     'User-Agent': `openclaw-xiotbox/${pkg.version}`,
@@ -92,38 +87,33 @@ class WSSClient extends EventEmitter {
                 },
             });
             this.ws = ws;
-
             // Connection opened
             ws.on('open', () => {
                 if (this.ws !== ws || connectEpoch !== this.socketEpoch) {
                     try {
                         ws.close(1000, 'superseded');
-                    } catch (err) {}
+                    }
+                    catch (err) { }
                     finishResolve();
                     return;
                 }
                 console.log('[WSS] Connection established');
-                this.reconnectDelay = 1000;  // Reset backoff delay
+                this.reconnectDelay = 1000; // Reset backoff delay
                 this.emit('connected');
-
                 // Send HELLO with device/runtime metadata.
                 this.sendHello();
-
                 // Start heartbeat loop.
                 this.startHeartbeat();
-
                 // Flush messages buffered while offline.
                 this.flushOutbox();
-
                 finishResolve();
             });
-
             // Incoming message frames
             ws.on('message', (data, isBinary) => {
-                if (this.ws !== ws || connectEpoch !== this.socketEpoch) return;
+                if (this.ws !== ws || connectEpoch !== this.socketEpoch)
+                    return;
                 this._onRawMessage(data, isBinary);
             });
-
             // Connection closed
             ws.on('close', (code, reason) => {
                 const isCurrent = this.ws === ws && connectEpoch === this.socketEpoch;
@@ -133,23 +123,20 @@ class WSSClient extends EventEmitter {
                     this.stopHeartbeat();
                     this.ws = null;
                 }
-
                 if (!settled) {
                     finishReject(new Error(`WebSocket closed before ready (code=${code})`));
                 }
-
                 // Auto-reconnect unless the disconnect was intentional.
                 if (!this.isManualDisconnect && isCurrent) {
                     this.scheduleReconnect();
                 }
             });
-
             // Connection error
             ws.on('error', (err) => {
                 console.error('[WSS] Connection error:', err.message);
                 this.emit('error', err);
-                if (this.ws !== ws || connectEpoch !== this.socketEpoch) return;
-
+                if (this.ws !== ws || connectEpoch !== this.socketEpoch)
+                    return;
                 // Reject the connect promise if the socket is still connecting.
                 if (ws.readyState === WebSocket.CONNECTING) {
                     finishReject(err);
@@ -160,10 +147,8 @@ class WSSClient extends EventEmitter {
                 this.connectPromise = null;
             }
         });
-
         return this.connectPromise;
     }
-
     /**
      * Disconnect manually.
      */
@@ -171,44 +156,40 @@ class WSSClient extends EventEmitter {
         this.isManualDisconnect = true;
         this._clearReconnectTimer();
         this.stopHeartbeat();
-
         if (this.ws) {
             this.ws.close(1000, 'Manual disconnect');
         }
     }
-
     /**
      * Schedule reconnect with exponential backoff and jitter.
      */
     scheduleReconnect() {
-        if (this.isManualDisconnect) return;
-        if (this.reconnectTimer) return;
+        if (this.isManualDisconnect)
+            return;
+        if (this.reconnectTimer)
+            return;
         if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
             return;
         }
         // Exponential backoff + jitter to avoid reconnect storms.
         const jitter = Math.random() * 1000;
         const delay = Math.min(this.reconnectDelay + jitter, this.maxReconnectDelay);
-
         console.log(`[WSS] Reconnecting in ${Math.round(delay / 1000)}s...`);
-
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             this.connect().catch((err) => {
                 console.error('[WSS] Reconnect failed:', err.message);
             });
         }, delay);
-
         // Exponential growth: 1s -> 2s -> 4s -> 8s -> ... -> 60s
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
     }
-
     _clearReconnectTimer() {
-        if (!this.reconnectTimer) return;
+        if (!this.reconnectTimer)
+            return;
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
     }
-
     /**
      * Send the HELLO message with device/runtime metadata.
      */
@@ -217,7 +198,7 @@ class WSSClient extends EventEmitter {
             version: pkg.version,
             capabilities: {
                 commands: ['help', 'status', 'ping', 'version'],
-                streaming: false,  // Streaming output is not supported here
+                streaming: false, // Streaming output is not supported here
                 max_command_length: 10000,
                 control_actions: this.controlActions,
                 scopes: this.scopes,
@@ -229,7 +210,6 @@ class WSSClient extends EventEmitter {
                 hostname: os.hostname(),
             },
         };
-
         // Merge so late-bound config.HELLO_EXTRA still works even if helloExtra was
         // initialized as an empty object at construction time.
         const extra = { ...(this.config?.HELLO_EXTRA || {}), ...(this.helloExtra || {}) };
@@ -240,14 +220,11 @@ class WSSClient extends EventEmitter {
             payload.e2e = extra.e2e;
         }
         this.sendMessage('HELLO', payload);
-
         console.log('[WSS] Sent HELLO');
     }
-
     setHelloExtra(extra) {
         this.helloExtra = extra || {};
     }
-
     /**
      * Start heartbeat loop (15 second interval).
      */
@@ -266,9 +243,8 @@ class WSSClient extends EventEmitter {
                 memory: process.memoryUsage(),
                 cpu: process.cpuUsage(),
             });
-        }, 15000);  // 15 second heartbeat
+        }, 15000); // 15 second heartbeat
     }
-
     /**
      * Stop heartbeat loop.
      */
@@ -278,7 +254,6 @@ class WSSClient extends EventEmitter {
             this.heartbeatInterval = null;
         }
     }
-
     /**
      * Send a message in the shared envelope format.
      */
@@ -292,72 +267,60 @@ class WSSClient extends EventEmitter {
             trace_id: payload.trace_id || null,
             payload,
         };
-
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify(envelope));
-        } else {
+        }
+        else {
             // Buffer the message and send it after reconnect.
             this._enqueue(envelope);
             console.warn(`[WSS] Cannot send message: connection not open (state: ${this.ws ? this.ws.readyState : 'null'})`);
         }
     }
-
     /**
      * Handle a decoded inbound message.
      */
     handleMessage(msg) {
         const { type, payload } = msg;
-
         switch (type) {
             case 'HELLO_ACK':
                 // Server-side capability / handshake acknowledgements are optional today,
                 // but keeping them explicit lets future gateway negotiation evolve quietly.
                 this.emit('HELLO_ACK', payload);
                 break;
-
             case 'HEARTBEAT_ACK':
                 // Heartbeat response: ignore silently.
                 break;
-
             case 'COMMAND':
                 // Forward command events to the channel layer.
                 this.emit('COMMAND', payload);
                 break;
-
             case 'CONTROL':
                 this.emit('CONTROL', payload);
                 break;
-
             case 'V2.EVENT_ACK':
                 this.emit('V2.EVENT_ACK', payload);
                 break;
-
             case 'V2.APPROVAL_RESOLVE':
                 this.emit('V2.APPROVAL_RESOLVE', payload);
                 break;
-
             case 'V2.ASK_USER_ANSWER':
                 this.emit('V2.ASK_USER_ANSWER', payload);
                 break;
-
             case 'V2.AGENT_PROFILE_SYNC':
                 // Gateway asks the channel to materialize a main agent as
                 // agents.entries.<agent_id>; channel.ts listens for this event.
                 this.emit('V2.AGENT_PROFILE_SYNC', payload);
                 break;
-
             case 'SESSION.ARCHIVE_ACK':
                 // Gateway acknowledges a SESSION.ARCHIVE round-trip; channel.ts
                 // settles the pending session.archive COMMAND_RESULT with it.
                 this.emit('SESSION.ARCHIVE_ACK', payload);
                 break;
-
             case 'SESSION.REGISTER_ACK':
                 // Gateway acknowledges a SESSION.REGISTER upsert; channel.ts
                 // logs failures for observability only.
                 this.emit('SESSION.REGISTER_ACK', payload);
                 break;
-
             case 'ERROR':
                 console.error('[WSS] Server error:', payload);
                 if (payload.code === 'REAUTH_REQUIRED') {
@@ -370,15 +333,14 @@ class WSSClient extends EventEmitter {
                     this.emit('auth_required', payload);
                 }
                 break;
-
             default:
                 console.warn('[WSS] Unknown message type:', type);
         }
     }
-
     _onRawMessage(data, isBinary = false) {
         const text = this._extractJsonText(data, isBinary);
-        if (!text) return;
+        if (!text)
+            return;
         try {
             const msg = JSON.parse(text);
             if (!msg || typeof msg !== 'object') {
@@ -386,38 +348,38 @@ class WSSClient extends EventEmitter {
                 return;
             }
             this.handleMessage(msg);
-        } catch (err) {
+        }
+        catch (err) {
             this._warnParseIssue(`invalid JSON (${err.message})`, text);
         }
     }
-
     _extractJsonText(data, isBinary = false) {
         let text = '';
         if (typeof data === 'string') {
             text = data;
-        } else if (Buffer.isBuffer(data)) {
+        }
+        else if (Buffer.isBuffer(data)) {
             text = data.toString('utf8');
-        } else if (Array.isArray(data)) {
+        }
+        else if (Array.isArray(data)) {
             text = Buffer.concat(data).toString('utf8');
-        } else if (data instanceof ArrayBuffer) {
+        }
+        else if (data instanceof ArrayBuffer) {
             text = Buffer.from(data).toString('utf8');
-        } else {
+        }
+        else {
             this._warnParseIssue('unsupported frame payload type', typeof data);
             return null;
         }
-
         const trimmed = text.trim();
-        if (!trimmed) return null;
+        if (!trimmed)
+            return null;
         if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-            this._warnParseIssue(
-                isBinary ? 'binary non-json frame' : 'text non-json frame',
-                trimmed,
-            );
+            this._warnParseIssue(isBinary ? 'binary non-json frame' : 'text non-json frame', trimmed);
             return null;
         }
         return trimmed;
     }
-
     _warnParseIssue(reason, payload) {
         const now = Date.now();
         const preview = String(payload || '').replace(/\s+/g, ' ').slice(0, 120);
@@ -432,7 +394,6 @@ class WSSClient extends EventEmitter {
         }
         this.parseWarnSuppressed += 1;
     }
-
     /**
      * Build the connection URL.
      * Default path: /ws/bot/{device_id} (Gateway bot endpoint)
@@ -441,12 +402,10 @@ class WSSClient extends EventEmitter {
     _buildWsUrl() {
         let baseUrl = this.config.GATEWAY_WSS_URL;
         const deviceId = this.config.DEVICE_ID;
-
         // Auto-append device_id to the path if the URL ends with /ws/bot or /ws/bot/
         if (deviceId && /\/ws\/bot\/?$/.test(baseUrl)) {
             baseUrl = baseUrl.replace(/\/+$/, '') + '/' + encodeURIComponent(deviceId);
         }
-
         if (!this.config.USE_QUERY_AUTH) {
             return baseUrl;
         }
@@ -455,12 +414,12 @@ class WSSClient extends EventEmitter {
             urlObj.searchParams.set('device_id', deviceId);
             urlObj.searchParams.set('token', this.config.DEVICE_TOKEN);
             return urlObj.toString();
-        } catch (err) {
+        }
+        catch (err) {
             // Fallback for callers that pass a non-standard URL-like string.
             return `${baseUrl}?device_id=${encodeURIComponent(deviceId)}&token=${encodeURIComponent(this.config.DEVICE_TOKEN)}`;
         }
     }
-
     _enqueue(envelope) {
         const now = Date.now();
         this.outbox.push({ envelope, ts: now });
@@ -469,17 +428,19 @@ class WSSClient extends EventEmitter {
             this.outbox.shift();
         }
     }
-
     flushOutbox() {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN)
+            return;
         const now = Date.now();
         const pending = this.outbox;
         this.outbox = [];
         for (const item of pending) {
-            if (now - item.ts > this.outboxTtlMs) continue;
+            if (now - item.ts > this.outboxTtlMs)
+                continue;
             try {
                 this.ws.send(JSON.stringify(item.envelope));
-            } catch (err) {
+            }
+            catch (err) {
                 // Re-queue if send fails.
                 this._enqueue(item.envelope);
                 break;
@@ -487,5 +448,4 @@ class WSSClient extends EventEmitter {
         }
     }
 }
-
 export default WSSClient;
