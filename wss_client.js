@@ -346,6 +346,12 @@ class WSSClient extends EventEmitter {
                 this.emit('V2.AGENT_PROFILE_SYNC', payload);
                 break;
 
+            case 'SESSION.ARCHIVE_ACK':
+                // Gateway acknowledges a SESSION.ARCHIVE round-trip; channel.ts
+                // settles the pending session.archive COMMAND_RESULT with it.
+                this.emit('SESSION.ARCHIVE_ACK', payload);
+                break;
+
             case 'ERROR':
                 console.error('[WSS] Server error:', payload);
                 if (payload.code === 'REAUTH_REQUIRED') {

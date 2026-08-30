@@ -195,6 +195,136 @@ function pruneContextEpochCache(): void {
   }
 }
 
+// ── Session command dispatch (XIOT-BUG-0006) ──
+// The gateway forwards command_type in the bot COMMAND payload
+// (client_ws.py flattens it next to command_id). Non-chat session commands
+// carry plain JSON and no OGE2E1 envelope; routing them into the chat path
+// used to fail with e2e_required. Chat stays the default action.
+
+export type SessionCommandAction =
+  | 'chat'
+  | 'model_select'
+  | 'archive'
+  | 'interrupt'
+  | 'unsupported';
+
+export function resolveSessionCommandAction(commandType: unknown): SessionCommandAction {
+  const normalized = String(commandType || '').trim();
+  switch (normalized) {
+    case '':
+    case 'chat':
+      return 'chat';
+    case 'session.model.select':
+      return 'model_select';
+    case 'session.archive':
+      return 'archive';
+    case 'session.interrupt':
+      return 'interrupt';
+    default:
+      return 'unsupported';
+  }
+}
+
+// conversation_id → last seen chat binding. session.* commands carry only
+// conversation_id, so this registry maps them back onto the exact OpenClaw
+// session the conversation is bound to. In-memory on purpose: after a plugin
+// restart the next chat message re-registers it, and a miss fails the command
+// instead of overriding the wrong session.
+type KnownConversationBinding = {
+  sessionKey: string;
+  agentId: string;
+  contextEpoch: number;
+  ts: number;
+};
+const CONVERSATION_BINDING_TTL_MS = 24 * 60 * 60 * 1000;
+const CONVERSATION_BINDING_MAX = 500;
+const conversationBindingRegistry = new Map<string, KnownConversationBinding>();
+
+export function rememberConversationBinding(
+  conversationId: string,
+  binding: { sessionKey: string; agentId: string; contextEpoch: number },
+): void {
+  const key = String(conversationId || '').trim();
+  if (!key) return;
+  const now = Date.now();
+  for (const [k, v] of conversationBindingRegistry.entries()) {
+    if (now - v.ts > CONVERSATION_BINDING_TTL_MS) conversationBindingRegistry.delete(k);
+  }
+  while (conversationBindingRegistry.size >= CONVERSATION_BINDING_MAX) {
+    const firstKey = conversationBindingRegistry.keys().next().value;
+    conversationBindingRegistry.delete(firstKey);
+  }
+  conversationBindingRegistry.set(key, { ...binding, ts: now });
+}
+
+export function lookupConversationBinding(
+  conversationId: string,
+): KnownConversationBinding | null {
+  const key = String(conversationId || '').trim();
+  if (!key) return null;
+  const entry = conversationBindingRegistry.get(key) || null;
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CONVERSATION_BINDING_TTL_MS) {
+    conversationBindingRegistry.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+// Pending SESSION.ARCHIVE round-trips keyed by conversation_id. The gateway
+// replies SESSION.ARCHIVE_ACK {ok, conversation_id?, session_id?, error?};
+// the pending entry settles the COMMAND_RESULT of the originating command.
+type PendingSessionArchive = {
+  cmdId: string;
+  traceId: string | null;
+  client: any;
+  timer: any;
+};
+const SESSION_ARCHIVE_ACK_TIMEOUT_MS = 8000;
+// Exported for testing.
+export const pendingSessionArchives = new Map<string, PendingSessionArchive>();
+
+// Settle a SESSION.ARCHIVE_ACK against the pending registry. The gateway
+// error path echoes only session_id (not conversation_id), so fall back to
+// session_id and finally to a single-pending match; unresolved acks expire
+// via the pending timeout instead of blocking the client forever.
+export function settleSessionArchiveAck(data: any): boolean {
+  const payload = data?.payload || data || {};
+  const byConversation = String(payload.conversation_id || '').trim();
+  if (byConversation && pendingSessionArchives.has(byConversation)) {
+    return settleSessionArchive(byConversation, payload.ok === true, payload.error);
+  }
+  const bySession = String(payload.session_id || '').trim();
+  if (bySession && pendingSessionArchives.has(bySession)) {
+    return settleSessionArchive(bySession, payload.ok === true, payload.error);
+  }
+  if (!byConversation && !bySession && pendingSessionArchives.size === 1) {
+    const [onlyKey] = pendingSessionArchives.keys();
+    return settleSessionArchive(onlyKey, payload.ok === true, payload.error);
+  }
+  return false;
+}
+
+function settleSessionArchive(
+  conversationId: string,
+  ok: boolean,
+  error?: string,
+): boolean {
+  const key = String(conversationId || '').trim();
+  const entry = pendingSessionArchives.get(key);
+  if (!entry) return false;
+  pendingSessionArchives.delete(key);
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.client.sendMessage('COMMAND_RESULT', {
+    command_id: entry.cmdId,
+    status: ok ? 'success' : 'failed',
+    trace_id: entry.traceId,
+    ...(ok ? {} : { error: error || 'session_archive_failed' }),
+    result: ok ? { conversation_id: key } : {},
+  });
+  return true;
+}
+
 function resolveInboundContextEpoch(params: {
   incoming: any;
   deviceId: string;
@@ -1837,6 +1967,108 @@ export const xiotboxPlugin = {
         commandCache.set(cmdId, { ts: Date.now(), payload });
       };
 
+      // Session command handler (XIOT-BUG-0006). Runs before the chat/E2E
+      // path: session.* commands carry plain JSON without an OGE2E1 envelope.
+      const handleSessionCommand = async (args: {
+        action: 'model_select' | 'archive' | 'interrupt' | 'unsupported';
+        payload: any;
+        incoming: any;
+        cmdId: string;
+        traceId: string | null;
+      }): Promise<void> => {
+        const { action, payload, incoming, cmdId, traceId } = args;
+        const sendFailed = (error: string) => {
+          const failPayload = {
+            command_id: cmdId,
+            status: 'failed',
+            trace_id: traceId,
+            error,
+            result: {},
+          };
+          client.sendMessage('COMMAND_RESULT', failPayload);
+          setCached(cmdId, failPayload);
+        };
+
+        if (action === 'unsupported') {
+          sendFailed('unsupported_command_type');
+          return;
+        }
+
+        if (action === 'interrupt') {
+          // The OpenClaw host exposes no per-session cancel seam to channel
+          // plugins; declaring interrupt=true made clients offer a button that
+          // always failed with e2e_required. Fail honestly — the gateway
+          // capability is corrected to false in the same change — until the
+          // host runtime ships a cancel API.
+          log?.warn?.(`[XiotBox] session.interrupt unsupported on OpenClaw runtime cmd=${cmdId}`);
+          sendFailed('interrupt_unavailable');
+          return;
+        }
+
+        const conversationId = normalizeStringValue(
+          incoming?.conversation_id ?? payload?.conversation_id,
+        ) || '';
+        if (!conversationId) {
+          sendFailed('conversation_id_required');
+          return;
+        }
+
+        if (action === 'archive') {
+          client.sendMessage('COMMAND_RESULT', {
+            command_id: cmdId,
+            status: 'running',
+            trace_id: traceId,
+            result: {},
+          });
+          pendingSessionArchives.set(conversationId, {
+            cmdId,
+            traceId,
+            client,
+            timer: setTimeout(() => {
+              settleSessionArchive(conversationId, false, 'session_archive_ack_timeout');
+            }, SESSION_ARCHIVE_ACK_TIMEOUT_MS),
+          });
+          // Runtime-neutral gateway contract (bot_ws.py handles this message
+          // for any bot): marks the gw_conversation_v2 row archived for this
+          // device. Idempotent; records are kept for restore.
+          client.sendMessage('SESSION.ARCHIVE', {
+            conversation_id: conversationId,
+            session_id: conversationId,
+          });
+          return;
+        }
+
+        // action === 'model_select'
+        const model = normalizeStringValue(incoming?.model ?? payload?.model);
+        if (!model) {
+          sendFailed('model_required');
+          return;
+        }
+        const known = lookupConversationBinding(conversationId);
+        if (!known) {
+          // No binding seen since process start: refuse instead of overriding
+          // an arbitrary session. The next chat message re-registers it.
+          sendFailed('session_binding_not_found');
+          return;
+        }
+        setSessionModelOverride(known.sessionKey, model);
+        log?.info?.(
+          `[XiotBox] session.model.select cmd=${cmdId} conversation=${conversationId} model=${model}`,
+        );
+        const successPayload = {
+          command_id: cmdId,
+          status: 'success',
+          trace_id: traceId,
+          result: { model },
+        };
+        client.sendMessage('COMMAND_RESULT', successPayload);
+        setCached(cmdId, successPayload);
+      };
+
+      client.on('SESSION.ARCHIVE_ACK', (ackPayload: any) => {
+        settleSessionArchiveAck(ackPayload);
+      });
+
       client.on('COMMAND', async (payload: any) => {
         let lifecycleContext: {
           bindingId: string;
@@ -1884,6 +2116,26 @@ export const xiotboxPlugin = {
           });
 
           const incoming = payload?.payload || payload || {};
+
+          // ── Session command dispatch (XIOT-BUG-0006) ──
+          // Non-chat commands carry plain JSON and no OGE2E1 envelope; they
+          // must be routed before the chat/E2E path or they fail with
+          // e2e_required. command_type arrives at the bot payload top level
+          // (client_ws.py flattens it next to command_id).
+          const sessionCommandType = normalizeStringValue(payload?.command_type)
+            ?? normalizeStringValue(incoming?.command_type)
+            ?? '';
+          const sessionAction = resolveSessionCommandAction(sessionCommandType);
+          if (sessionAction !== 'chat') {
+            await handleSessionCommand({
+              action: sessionAction,
+              payload,
+              incoming,
+              cmdId,
+              traceId,
+            });
+            return;
+          }
 
           // Always refresh client peer key before handling a command.
           // This avoids encrypting reply with stale key after mobile/desktop key rotation.
@@ -2068,6 +2320,16 @@ export const xiotboxPlugin = {
           const agentId = conversationBinding?.agentId || resolveThreadAgentId(fullConfig, threadId);
           const sessionKey = conversationBinding?.sessionKey ||
             buildSessionKey(agentId, finalCfg.DEVICE_ID, threadId, contextEpoch);
+          // Track conversation→session for session.* command dispatch
+          // (XIOT-BUG-0006): model.select/archive arrive with conversation_id
+          // only and must resolve back to the exact session.
+          if (conversationBinding?.conversationId) {
+            rememberConversationBinding(conversationBinding.conversationId, {
+              sessionKey,
+              agentId,
+              contextEpoch,
+            });
+          }
           // 客户端随消息带上 permission（full | readonly），驱动本会话的工具策略。
           const inboundPermission = incoming?.metadata?.permission;
           if (inboundPermission === 'readonly' || inboundPermission === 'full') {
