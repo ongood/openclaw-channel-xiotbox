@@ -1,6 +1,27 @@
-# XiotBox OpenClaw Channel
+<p align="center">
+  <img src="docs/assets/xiotbox-logo.png" alt="XiotBox" width="112" />
+</p>
 
-XiotBox is an OpenClaw channel plugin that connects OpenClaw to a XiotBox Gateway over WSS and can optionally expose device-control tools to agents.
+<h1 align="center">XiotBox OpenClaw Channel</h1>
+
+<p align="center">
+  <strong>The XiotBox channel and device-control integration for OpenClaw.</strong><br />
+  Remote chat, Gateway connectivity, optional local/remote control tools, and bridge-mode deployment for OpenClaw agents.
+</p>
+
+<p align="center">
+  <img alt="Node" src="https://img.shields.io/badge/Node.js-18%2B-339933" />
+  <img alt="OpenClaw" src="https://img.shields.io/badge/OpenClaw-Channel-555" />
+  <img alt="Gateway" src="https://img.shields.io/badge/Gateway-WSS-1f6feb" />
+  <img alt="Tools" src="https://img.shields.io/badge/Agent%20Tools-Optional-6f42c1" />
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-2ea043" />
+</p>
+
+<p align="center">
+  English · <a href="README.zh-CN.md">Simplified Chinese</a>
+</p>
+
+`openclaw-channel-xiotbox` connects OpenClaw to XiotBox Gateway over WSS and can optionally expose XiotBox device-control capabilities to OpenClaw agents. It supports both in-process plugin mode and a standalone bridge mode without turning OpenClaw into a XiotBox-specific fork.
 
 For public positioning, the plugin is best described as:
 
