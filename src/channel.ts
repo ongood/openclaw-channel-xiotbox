@@ -35,6 +35,11 @@ import {
 } from './subagent-lifecycle.js';
 import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js';
 import { setSessionModelOverride } from './session-model.js';
+import {
+  OPENCLAW_RUNTIME_KIND,
+  buildOpenclawCapabilityDeclaration,
+  buildOpenclawResourceFacts,
+} from './runtime-profile.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import {
   clearConnectedAt,
@@ -333,7 +338,11 @@ function settleSessionArchive(
 // by design (XIOT-BUG-0001 showed the cost of implicit runtime identity).
 // workspaces stay empty until an OpenClaw workspace seam is specified; local
 // paths never leave the bot.
-export const OPENCLAW_RUNTIME_KIND = 'openclaw';
+//
+// OPENCLAW_RUNTIME_KIND and the richer runtime profile now live in
+// runtime-profile.ts (XIOT-BUG-0050a); re-export keeps the historical import
+// surface intact for existing contract tests and callers.
+export { OPENCLAW_RUNTIME_KIND } from './runtime-profile.js';
 
 export function buildOpenclawRuntimeId(deviceId: string): string {
   const normalized = String(deviceId || '').trim();
@@ -355,7 +364,17 @@ export function buildOpenclawRuntimeListPayload(deviceId: string): {
             runtime_kind: OPENCLAW_RUNTIME_KIND,
             name: `OpenClaw (${normalized})`,
             status: 'online',
-            workspaces: [],
+            // Resource facts only (XIOT-PLAN-0008 §3.2 rule 4): empty lists
+            // mean "nothing published", never a capability tri-state.
+            ...buildOpenclawResourceFacts(),
+            // Explicit device capability declaration (XIOT-BUG-0050a),
+            // published under the exact `capabilities` key the Gateway 0048a
+            // contract reads (bot_ws._handle_runtimes_list →
+            // runtime_profile.normalize_declaration). The declaration carries
+            // command_ack=false, so the gateway derives contract_level=
+            // "legacy" — 0050a never claims v1 (that is 0050b's ACK/DELIVERED
+            // lifecycle).
+            capabilities: buildOpenclawCapabilityDeclaration(),
           },
         ]
       : [],
@@ -2127,6 +2146,12 @@ export const xiotboxPlugin = {
           agent_id: entry.agentId,
           context_epoch: entry.contextEpoch,
           projection_version: 1,
+          // Same device capability declaration as RUNTIMES.LIST (XIOT-BUG-
+          // 0050a): Gateway 0048a register_bot_session reads `capabilities`
+          // here too, so both declaration surfaces (the runtimes registry and
+          // conversation registration) carry one identical object and cannot
+          // drift apart.
+          capabilities: buildOpenclawCapabilityDeclaration(),
         });
       };
 
