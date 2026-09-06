@@ -1,15 +1,36 @@
 /**
- * OpenClaw runtime profile — explicit capability declaration (XIOT-BUG-0050a).
+ * OpenClaw capability declaration — explicit device facts (XIOT-BUG-0050a).
  *
- * This module is the single source of truth for the runtime profile the
- * channel publishes so the gateway and clients never have to *guess* what this
- * runtime can do. Every field below is pinned by `test/runtime-profile.test.mjs`.
+ * This module is the single source of truth for the capability declaration the
+ * channel publishes. The wire placement is the Gateway 0048a contract input:
+ * `bot_ws._handle_runtimes_list` reads `runtime.capabilities` from each
+ * RUNTIMES.LIST entry and `platform_service.register_bot_session` reads
+ * `capabilities` from each SESSION.REGISTER payload, then feeds the object
+ * through `runtime_profile.normalize_declaration`. A declaration published
+ * under any other key is silently dropped by the gateway, so the key name is
+ * pinned by test/runtime-profile.test.mjs and
+ * test/runtime-visibility.test.mjs.
  *
- * 0050a ships the declaration only. `contract_level` therefore stays in the
- * legacy/transition band — the runtime does NOT claim the v1 contract yet.
- * The canonical ACK/DELIVERED lifecycle, structured runtime rejection and
- * error normalization land in 0050b; nothing in this module may imply they
- * already exist.
+ * Declaration shape rules (XIOT-PLAN-0008 §3.1/§3.2 + gateway 0048a
+ * runtime_profile.py):
+ * - `capabilities_version` must be the strict integer 1.
+ * - Values are tri-state facts: strict JSON true/false (the literal string
+ *   "unknown" is never produced by this builder — an absent key is how the
+ *   device says "no fact").
+ * - The device NEVER self-reports the gateway-normalized `contract_level`:
+ *   the gateway derives "v1"/"legacy" itself from the declared Core facts.
+ *   0050a does not implement the canonical COMMAND_ACK lifecycle (that is
+ *   0050b), so this declaration states `command_ack: false` — which truthfully
+ *   pins the derived contract level at "legacy". Declaring ack=true would let
+ *   the gateway derive v1 for a runtime that cannot ack.
+ * - `models` / `workspaces` are resource data and stay OUT of the declaration;
+ *   they ride on the RUNTIMES.LIST runtime entry next to `capabilities`.
+ * - Adapter-namespaced extensions (§3.4.1) use dotted keys. CROSS-REPO SEAM
+ *   (recorded, not hidden): gateway 0048a `normalize_declaration` currently
+ *   consumes only the frozen CORE/OPTIONAL keys plus `e2e` and silently drops
+ *   every other key, so `openclaw.binding_registry` is declared truthfully
+ *   here but is NOT yet preserved or consumed by the control plane. Adding
+ *   extension preservation is the 0048a line's change; see PR report.
  */
 
 /**
@@ -18,19 +39,8 @@
  */
 export const OPENCLAW_RUNTIME_KIND = 'openclaw' as const;
 
-/** Version of the profile/capability schema this declaration uses. */
+/** Version of the capability declaration schema (0048a CAPABILITIES_VERSION). */
 export const OPENCLAW_CAPABILITIES_VERSION = 1 as const;
-
-/**
- * Contract level for the 0050a increment. The runtime publishes an explicit
- * profile but has not yet implemented the v1 runtime lifecycle (canonical
- * ACK/DELIVERED, structured rejection), so v1 must NOT be claimed. `legacy`
- * is the pre-profile band; `transition` is the honest label for "explicit
- * profile present, v1 lifecycle pending".
- */
-export const OPENCLAW_CONTRACT_LEVEL = 'transition' as const;
-
-export type OpenclawContractLevel = 'legacy' | 'transition' | 'v1';
 
 /**
  * Binding registry lifecycle. `process_local` is the truthful value today:
@@ -38,9 +48,9 @@ export type OpenclawContractLevel = 'legacy' | 'transition' | 'v1';
  * override map (src/session-model.ts) are in-memory only — they reset on a
  * plugin restart and re-register on the next chat message. `persistent` would
  * require a durable store that does not exist yet; declaring it would be a
- * lie. The lifecycle is made explicit so the client knows that model
- * selection and session.* command routing lose their in-memory bindings
- * across a restart until re-registration.
+ * lie. The lifecycle is made explicit so upstream knows that model selection
+ * and session.* command routing lose their in-memory bindings across a
+ * restart until re-registration.
  */
 export const OPENCLAW_BINDING_REGISTRY_LIFECYCLE = 'process_local' as const;
 
@@ -60,87 +70,158 @@ export const OPENCLAW_MODEL_CATALOG_AVAILABLE = false as const;
  */
 export const OPENCLAW_BINDING_REGISTRY_CAN_SELECT = true as const;
 
-export type OpenclawRuntimeProfile = {
-  runtime_kind: 'openclaw';
+/** E2E command envelope (XIOT-PLAN-0008 §3.2 / §3.4.1: OGE2E1 version 1). */
+export const OPENCLAW_E2E_ENVELOPE = 'OGE2E1' as const;
+
+/** E2E command envelope algorithm, as implemented by src/e2e.ts. */
+export const OPENCLAW_E2E_ALG = 'x25519+AES-256-GCM' as const;
+
+export type OpenclawCapabilityDeclaration = {
   capabilities_version: 1;
-  contract_level: OpenclawContractLevel;
-  /**
-   * Neutral conversation create: the platform (gateway) creates the
-   * conversation and pushes a binding; the channel does not fork/create/delete
-   * conversations on its own.
-   */
+  // ── Core (0048a CORE_CAPABILITIES): every value is a code-verified fact. ──
+  message_send: true;
+  message_user_projection: true;
+  run_lifecycle: true;
+  /** 0050a truth: no canonical COMMAND_ACK lifecycle yet (0050b). */
+  command_ack: false;
+  capability_advertisement: true;
+  e2e_policy_declaration: true;
+  // ── Optional (0048a OPTIONAL_CAPABILITIES): negotiated tri-state facts. ──
   conversation_create: true;
-  /** OpenClaw has no workspace seam yet; local paths never leave the bot. */
+  conversation_rename: false;
+  conversation_archive: true;
+  conversation_fork: false;
   workspace_context: false;
-  e2e: {
-    /** Chat commands require an OGE2E1 envelope; non-chat commands are plain. */
-    required_for_commands: true;
-  };
-  /** No static model catalog seam; models is therefore always empty. */
-  model_catalog: false;
-  models: Array<Record<string, unknown>>;
-  /** Independent capability (see OPENCLAW_BINDING_REGISTRY_CAN_SELECT). */
+  workspace_create: false;
   model_selection: boolean;
-  openclaw: {
-    /** Explicit binding registry lifecycle (see constant above). */
-    binding_registry: OpenclawBindingRegistryLifecycle;
+  model_catalog: false;
+  interrupt: false;
+  queue: false;
+  queue_edit: false;
+  queue_remove: false;
+  queue_promote: false;
+  ask_user: true;
+  ask_user_custom: false;
+  approvals: true;
+  permissions_set: true;
+  tool_events: true;
+  reasoning: true;
+  subagents: true;
+  attachments: true;
+  goal: false;
+  e2e: {
+    required_for_commands: true;
+    envelope: typeof OPENCLAW_E2E_ENVELOPE;
+    alg: typeof OPENCLAW_E2E_ALG;
   };
+  'openclaw.binding_registry': OpenclawBindingRegistryLifecycle;
 };
 
-export type OpenclawRuntimeProfileOptions = {
-  /**
-   * Override the contract level. Any caller may only *narrow* the claim, never
-   * widen it: `v1` is rejected by the builder until 0050b exists.
-   */
-  contractLevel?: OpenclawContractLevel;
-  /**
-   * Override the independently-detected model_selection flag. This is the
-   * detection seam for "does the binding registry currently support select?".
-   */
-  modelSelection?: boolean;
+export type OpenclawCapabilityDeclarationOptions = {
   /**
    * Override the binding registry lifecycle. Defaults to the truthful
    * process_local value.
    */
   bindingRegistry?: OpenclawBindingRegistryLifecycle;
+  /**
+   * Override the independently-detected model_selection flag. This is the
+   * detection seam for "does the binding registry currently support select?".
+   */
+  modelSelection?: boolean;
 };
 
 /**
- * Build the explicit OpenClaw runtime profile. Pure: no filesystem or network
- * access, so it is fully unit-testable and safe to call on every bot connect.
+ * Build the explicit OpenClaw capability declaration. Pure: no filesystem or
+ * network access, so it is fully unit-testable and safe to inline into every
+ * RUNTIMES.LIST entry and SESSION.REGISTER payload.
  *
- * `model_selection` is detected independently from `model_catalog`: a caller
- * that knows the binding registry lost its select seam can pass
- * `modelSelection: false`, while `model_catalog`/`models` stay untouched.
+ * Field notes (all pinned by tests):
+ * - `conversation_create: true` is the NEUTRAL create path: the platform
+ *   (gateway) creates the conversation and the channel registers the binding
+ *   (SESSION.REGISTER). The absence of a native `session.create` command is
+ *   NOT a reason to declare false — that would misreport branch B of the
+ *   conversation.ensure contract as unsupported.
+ * - `conversation_delete` is intentionally NOT asserted by the device: there
+ *   is no device-side delete seam in this channel, and the 0048a adapter
+ *   static contract for openclaw.v1 owns that fact. An absent optional key
+ *   normalizes to "unknown" and is then filled by the static contract — the
+ *   device never guesses.
+ * - `e2e.control_plane_identity` is intentionally NOT declared: the control
+ *   plane identity line is 0046c, so the gateway normalizes it to "unknown".
+ * - `model_selection` is detected independently from `model_catalog`: a
+ *   caller that knows the binding registry lost its select seam can pass
+ *   `modelSelection: false`, while `model_catalog` stays untouched.
  */
-export function buildOpenclawRuntimeProfile(
-  options: OpenclawRuntimeProfileOptions = {},
-): OpenclawRuntimeProfile {
-  const contractLevel = options.contractLevel ?? OPENCLAW_CONTRACT_LEVEL;
-  // 0050a guard: the runtime must never claim the v1 contract before the
-  // canonical ACK/DELIVERED lifecycle (0050b) exists. Fail loudly at the
-  // declaration source rather than shipping a false claim.
-  if (contractLevel === 'v1') {
-    throw new Error('contract_level_v1_not_claimable');
-  }
+export function buildOpenclawCapabilityDeclaration(
+  options: OpenclawCapabilityDeclarationOptions = {},
+): OpenclawCapabilityDeclaration {
   const bindingRegistry = options.bindingRegistry ?? OPENCLAW_BINDING_REGISTRY_LIFECYCLE;
   const modelSelection = options.modelSelection ?? OPENCLAW_BINDING_REGISTRY_CAN_SELECT;
   return {
-    runtime_kind: OPENCLAW_RUNTIME_KIND,
     capabilities_version: OPENCLAW_CAPABILITIES_VERSION,
-    contract_level: contractLevel,
+    // Core: chat works (E2E-gated), user/assistant messages are projected into
+    // conversation lifecycle events (src/conversation-projection.ts), run
+    // started/completed/failed are emitted (src/channel.ts), the canonical ACK
+    // lifecycle does NOT exist yet (command_ack=false, 0050b), this very
+    // advertisement proves capability_advertisement, and the e2e block below
+    // is the e2e_policy_declaration fact.
+    message_send: true,
+    message_user_projection: true,
+    run_lifecycle: true,
+    command_ack: false,
+    capability_advertisement: true,
+    e2e_policy_declaration: true,
+    // Optional: rename/fork hit unsupported_command_type (channel.ts
+    // resolveSessionCommandAction); archive has a real ACKed path; interrupt
+    // fails honestly with interrupt_unavailable; the queue family has no
+    // seam; ask_user is projected (resolveOption only — no custom answers,
+    // XIOT-BUG-0008); approvals ride approval-lifecycle; per-session
+    // permission arrives as chat metadata (full | readonly); tool events,
+    // reasoning blocks, subagents and attachments are all projected.
     conversation_create: true,
+    conversation_rename: false,
+    conversation_archive: true,
+    conversation_fork: false,
     workspace_context: false,
+    workspace_create: false,
+    model_selection: modelSelection,
+    model_catalog: OPENCLAW_MODEL_CATALOG_AVAILABLE,
+    interrupt: false,
+    queue: false,
+    queue_edit: false,
+    queue_remove: false,
+    queue_promote: false,
+    ask_user: true,
+    ask_user_custom: false,
+    approvals: true,
+    permissions_set: true,
+    tool_events: true,
+    reasoning: true,
+    subagents: true,
+    attachments: true,
+    goal: false,
+    // E2E policy (0048a normalize_e2e_declaration shape): required_for_commands
+    // must be a strict JSON bool; envelope/alg are non-empty strings. Chat
+    // commands without a valid OGE2E1 envelope fail with e2e_required — that
+    // enforcement is the OGE2E1 security boundary and is NOT relaxed here.
     e2e: {
       required_for_commands: true,
+      envelope: OPENCLAW_E2E_ENVELOPE,
+      alg: OPENCLAW_E2E_ALG,
     },
-    model_catalog: OPENCLAW_MODEL_CATALOG_AVAILABLE,
-    // model_catalog=false ⇒ models=[] is an invariant of this module, not an
-    // accident: with no catalog seam there is nothing to list.
-    models: [],
-    model_selection: modelSelection,
-    openclaw: {
-      binding_registry: bindingRegistry,
-    },
+    // Adapter-namespaced extension (XIOT-PLAN-0008 §3.4.1). See the module
+    // docblock for the cross-repo seam: declared here, not yet consumed by
+    // the 0048a gateway provider.
+    'openclaw.binding_registry': bindingRegistry,
   };
+}
+
+/**
+ * Resource facts that ride NEXT TO the declaration on the RUNTIMES.LIST
+ * runtime entry (never inside it): OpenClaw publishes no workspace seam and
+ * no model catalog, so both lists are empty. Empty lists are resource facts
+ * only — they must never be read as capability tri-states (0048a rule 4).
+ */
+export function buildOpenclawResourceFacts(): { workspaces: never[]; models: never[] } {
+  return { workspaces: [], models: [] };
 }

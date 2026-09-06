@@ -43,13 +43,19 @@ test('runtime list payload degrades to an empty registry without a device id', (
   assert.deepEqual(payload, { device_id: '', runtimes: [] });
 });
 
-test('runtime list payload carries the explicit runtime profile (0050a)', () => {
+test('runtime list entry publishes the 0050a capability declaration under `capabilities`', () => {
+  // Gateway 0048a reads runtime.capabilities (bot_ws._handle_runtimes_list →
+  // runtime_profile.normalize_declaration). The old `profile` key was dropped
+  // by the gateway, so the wire key is pinned here.
   const payload = buildOpenclawRuntimeListPayload('dev-1');
   const runtime = payload.runtimes[0];
-  assert.ok(runtime.profile, 'runtime entry declares a profile');
-  assert.equal(runtime.profile.runtime_kind, 'openclaw');
-  assert.equal(runtime.profile.capabilities_version, 1);
-  // 0050a ships the declaration only; the profile must not claim v1.
-  assert.equal(runtime.profile.contract_level, 'transition');
-  assert.equal(runtime.profile.openclaw.binding_registry, 'process_local');
+  assert.ok(runtime.capabilities, 'runtime entry declares capabilities');
+  assert.equal('profile' in runtime, false);
+  assert.equal(runtime.capabilities.capabilities_version, 1);
+  // The device never self-reports the gateway-derived contract level.
+  assert.equal('contract_level' in runtime.capabilities, false);
+  // 0050a has no canonical ACK lifecycle: the honest Core fact is false,
+  // which pins the gateway-derived level at legacy (never v1).
+  assert.equal(runtime.capabilities.command_ack, false);
+  assert.equal(runtime.capabilities['openclaw.binding_registry'], 'process_local');
 });

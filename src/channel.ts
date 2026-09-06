@@ -37,7 +37,8 @@ import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js
 import { setSessionModelOverride } from './session-model.js';
 import {
   OPENCLAW_RUNTIME_KIND,
-  buildOpenclawRuntimeProfile,
+  buildOpenclawCapabilityDeclaration,
+  buildOpenclawResourceFacts,
 } from './runtime-profile.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import {
@@ -363,11 +364,17 @@ export function buildOpenclawRuntimeListPayload(deviceId: string): {
             runtime_kind: OPENCLAW_RUNTIME_KIND,
             name: `OpenClaw (${normalized})`,
             status: 'online',
-            workspaces: [],
-            // Explicit capability profile (XIOT-BUG-0050a). Declared here so
-            // the bot's own outbound frame carries the truthful profile even
-            // before the gateway persists it; 0050a does not claim v1.
-            profile: buildOpenclawRuntimeProfile(),
+            // Resource facts only (XIOT-PLAN-0008 §3.2 rule 4): empty lists
+            // mean "nothing published", never a capability tri-state.
+            ...buildOpenclawResourceFacts(),
+            // Explicit device capability declaration (XIOT-BUG-0050a),
+            // published under the exact `capabilities` key the Gateway 0048a
+            // contract reads (bot_ws._handle_runtimes_list →
+            // runtime_profile.normalize_declaration). The declaration carries
+            // command_ack=false, so the gateway derives contract_level=
+            // "legacy" — 0050a never claims v1 (that is 0050b's ACK/DELIVERED
+            // lifecycle).
+            capabilities: buildOpenclawCapabilityDeclaration(),
           },
         ]
       : [],
@@ -2139,6 +2146,12 @@ export const xiotboxPlugin = {
           agent_id: entry.agentId,
           context_epoch: entry.contextEpoch,
           projection_version: 1,
+          // Same device capability declaration as RUNTIMES.LIST (XIOT-BUG-
+          // 0050a): Gateway 0048a register_bot_session reads `capabilities`
+          // here too, so both declaration surfaces (the runtimes registry and
+          // conversation registration) carry one identical object and cannot
+          // drift apart.
+          capabilities: buildOpenclawCapabilityDeclaration(),
         });
       };
 
