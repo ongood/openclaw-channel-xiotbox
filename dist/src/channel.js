@@ -13,6 +13,7 @@ import { registerActiveMemoryBinding, registerMemoryLifecycleAccount, } from './
 import { registerActiveSubagentParent, registerSubagentLifecycleAccount, resolvePendingSubagentDeliveryByConversation, } from './subagent-lifecycle.js';
 import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js';
 import { setSessionModelOverride } from './session-model.js';
+import { OPENCLAW_RUNTIME_KIND, buildOpenclawRuntimeProfile, } from './runtime-profile.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import { clearConnectedAt, describeGatewayAccountState, getGatewayAccount, nextGatewayInstanceId, registerGatewayAccount, removeGatewayAccount, setConnectedAt, stopGatewayAccount, } from './gateway-state.js';
 import { buildConfig, buildSessionKey, CHANNEL_ID, getChannelConfig, listAccountIds, normalizeAccountId, normalizeAgentId, normalizeContextEpoch, normalizePositiveInt, normalizeStringValue, normalizeThreadId, resolveAccount, resolveAgentId, resolveDefaultAccountId, resolveConversationBinding, resolveEffectiveConfig, resolveThreadAgentId, } from './config.js';
@@ -163,7 +164,11 @@ function settleSessionArchive(conversationId, ok, error) {
 // by design (XIOT-BUG-0001 showed the cost of implicit runtime identity).
 // workspaces stay empty until an OpenClaw workspace seam is specified; local
 // paths never leave the bot.
-export const OPENCLAW_RUNTIME_KIND = 'openclaw';
+//
+// OPENCLAW_RUNTIME_KIND and the richer runtime profile now live in
+// runtime-profile.ts (XIOT-BUG-0050a); re-export keeps the historical import
+// surface intact for existing contract tests and callers.
+export { OPENCLAW_RUNTIME_KIND } from './runtime-profile.js';
 export function buildOpenclawRuntimeId(deviceId) {
     const normalized = String(deviceId || '').trim();
     return normalized ? `openclaw-${normalized}` : '';
@@ -181,6 +186,10 @@ export function buildOpenclawRuntimeListPayload(deviceId) {
                     name: `OpenClaw (${normalized})`,
                     status: 'online',
                     workspaces: [],
+                    // Explicit capability profile (XIOT-BUG-0050a). Declared here so
+                    // the bot's own outbound frame carries the truthful profile even
+                    // before the gateway persists it; 0050a does not claim v1.
+                    profile: buildOpenclawRuntimeProfile(),
                 },
             ]
             : [],

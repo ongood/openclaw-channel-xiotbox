@@ -42,3 +42,14 @@ test('runtime list payload degrades to an empty registry without a device id', (
   const payload = buildOpenclawRuntimeListPayload('');
   assert.deepEqual(payload, { device_id: '', runtimes: [] });
 });
+
+test('runtime list payload carries the explicit runtime profile (0050a)', () => {
+  const payload = buildOpenclawRuntimeListPayload('dev-1');
+  const runtime = payload.runtimes[0];
+  assert.ok(runtime.profile, 'runtime entry declares a profile');
+  assert.equal(runtime.profile.runtime_kind, 'openclaw');
+  assert.equal(runtime.profile.capabilities_version, 1);
+  // 0050a ships the declaration only; the profile must not claim v1.
+  assert.equal(runtime.profile.contract_level, 'transition');
+  assert.equal(runtime.profile.openclaw.binding_registry, 'process_local');
+});

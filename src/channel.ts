@@ -35,6 +35,10 @@ import {
 } from './subagent-lifecycle.js';
 import { registerActiveToolRun, setSessionPermission } from './tool-lifecycle.js';
 import { setSessionModelOverride } from './session-model.js';
+import {
+  OPENCLAW_RUNTIME_KIND,
+  buildOpenclawRuntimeProfile,
+} from './runtime-profile.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import {
   clearConnectedAt,
@@ -333,7 +337,11 @@ function settleSessionArchive(
 // by design (XIOT-BUG-0001 showed the cost of implicit runtime identity).
 // workspaces stay empty until an OpenClaw workspace seam is specified; local
 // paths never leave the bot.
-export const OPENCLAW_RUNTIME_KIND = 'openclaw';
+//
+// OPENCLAW_RUNTIME_KIND and the richer runtime profile now live in
+// runtime-profile.ts (XIOT-BUG-0050a); re-export keeps the historical import
+// surface intact for existing contract tests and callers.
+export { OPENCLAW_RUNTIME_KIND } from './runtime-profile.js';
 
 export function buildOpenclawRuntimeId(deviceId: string): string {
   const normalized = String(deviceId || '').trim();
@@ -356,6 +364,10 @@ export function buildOpenclawRuntimeListPayload(deviceId: string): {
             name: `OpenClaw (${normalized})`,
             status: 'online',
             workspaces: [],
+            // Explicit capability profile (XIOT-BUG-0050a). Declared here so
+            // the bot's own outbound frame carries the truthful profile even
+            // before the gateway persists it; 0050a does not claim v1.
+            profile: buildOpenclawRuntimeProfile(),
           },
         ]
       : [],
