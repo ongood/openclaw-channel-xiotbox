@@ -6,6 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   OPENCLAW_RUNTIME_KIND,
@@ -58,4 +59,18 @@ test('runtime list entry publishes the 0050a capability declaration under `capab
   // which pins the gateway-derived level at legacy (never v1).
   assert.equal(runtime.capabilities.command_ack, false);
   assert.equal(runtime.capabilities['openclaw.binding_registry'], 'process_local');
+});
+
+test('both declaration wire sites publish the same builder output', () => {
+  // The declaration travels on exactly two wire sites: the RUNTIMES.LIST
+  // runtime entry (bot_ws._handle_runtimes_list) and the SESSION.REGISTER
+  // payload (platform_service.register_bot_session). Both must come from the
+  // single 0050a builder — a third site or a missing site would silently
+  // desynchronize the declaration between runtimes listing and session
+  // registration. Pinned against the built channel.js (the shipped artifact).
+  const built = readFileSync(new URL('../dist/src/channel.js', import.meta.url), 'utf-8');
+  const siteCount = built.split('capabilities: buildOpenclawCapabilityDeclaration()').length - 1;
+  assert.equal(siteCount, 2, 'RUNTIMES.LIST entry + SESSION.REGISTER must both declare');
+  // And the runtime kind rides with both payloads, not just the first.
+  assert.equal(built.includes('runtime_kind: OPENCLAW_RUNTIME_KIND'), true);
 });

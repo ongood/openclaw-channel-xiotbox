@@ -26,11 +26,13 @@
  * - `models` / `workspaces` are resource data and stay OUT of the declaration;
  *   they ride on the RUNTIMES.LIST runtime entry next to `capabilities`.
  * - Adapter-namespaced extensions (§3.4.1) use dotted keys. CROSS-REPO SEAM
- *   (recorded, not hidden): gateway 0048a `normalize_declaration` currently
- *   consumes only the frozen CORE/OPTIONAL keys plus `e2e` and silently drops
- *   every other key, so `openclaw.binding_registry` is declared truthfully
- *   here but is NOT yet preserved or consumed by the control plane. Adding
- *   extension preservation is the 0048a line's change; see PR report.
+ *   (recorded, not hidden): `openclaw.binding_registry` is REGISTERED on the
+ *   gateway (runtime_profile.py REGISTERED_EXTENSIONS, review round 3 of the
+ *   0048a PR #16), so the gateway now preserves it verbatim in the normalized
+ *   profile (profile.extensions + provenance.extensions_preserved).
+ *   Preservation is not consumption: no control-plane consumer acts on the
+ *   value yet — 0050a only guarantees the declared fact survives the gateway
+ *   round-trip. Pinned by test/runtime-profile.test.mjs.
  */
 /**
  * Stable runtime kind. The gateway default is deliberately neutral
