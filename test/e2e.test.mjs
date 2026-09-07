@@ -286,7 +286,9 @@ test('trust pinning rejects an identity whose fingerprint does not match its key
   payload.client_identity_fingerprint = '0'.repeat(64);
 
   assert.equal(e2e.resolveCommandPeerFromPayload(payload), null);
-  assert.equal(e2e.peerTrustError, 'client_identity_invalid');
+  // XIOT-BUG-0050b (PLAN-0008 §4.5): the identity material parses, but the
+  // authenticity/trust check failed — a runtime-local policy rejection.
+  assert.equal(e2e.peerTrustError, 'signature_invalid');
 });
 
 test('trust pinning re-enrolls an additional identity when enrollment is allowed', () => {

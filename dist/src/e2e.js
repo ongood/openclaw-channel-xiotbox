@@ -312,7 +312,9 @@ function verifyAndPinClientIdentity(cfg, deviceId, result, log) {
     const fp = computeFingerprintFull(pubDer);
     const claimedFp = String(identity.fingerprint || '').trim().toLowerCase();
     if (claimedFp && claimedFp !== fp) {
-        return { ok: false, fp, err: 'client_identity_invalid' };
+        // Material parses but the authenticity claim does not hold:
+        // runtime-local security policy rejection (XIOT-BUG-0050b, §4.5 row 3).
+        return { ok: false, fp, err: 'signature_invalid' };
     }
     const sigPayload = buildIdentitySigPayload({
         device_id: deviceId,
@@ -324,11 +326,13 @@ function verifyAndPinClientIdentity(cfg, deviceId, result, log) {
     try {
         const pubKey = crypto.createPublicKey({ key: pubDer, format: 'der', type: 'spki' });
         const ok = crypto.verify(null, sigPayload, pubKey, sig);
+        // Structure was legal but verification failed: policy rejection, not a
+        // protocol error (XIOT-BUG-0050b, PLAN-0008 §4.5 row 3).
         if (!ok)
-            return { ok: false, fp, err: 'client_identity_invalid' };
+            return { ok: false, fp, err: 'signature_invalid' };
     }
     catch (_err) {
-        return { ok: false, fp, err: 'client_identity_invalid' };
+        return { ok: false, fp, err: 'signature_invalid' };
     }
     const now = Date.now();
     const trust = loadTrust(cfg, deviceId) || { v: 2 };

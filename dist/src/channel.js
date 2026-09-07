@@ -7,6 +7,7 @@ import { OpenClawE2E } from './e2e.js';
 import { handleGatewayApprovalResolve, handleOutboundApprovalPayload, registerActiveApprovalBinding, registerApprovalLifecycleAccount, xiotboxApprovalCapability, } from './approval-lifecycle.js';
 import { handleGatewayAskUserResolve, handleOutboundAskUserPayload, registerActiveAskUserBinding, registerAskUserLifecycleAccount, } from './ask-user-lifecycle.js';
 import { handleAgentProfileSync } from './agent-profile-sync.js';
+import { CommandLifecycleEmitter, normalizeRuntimeError } from './command-ack.js';
 import { DurableEventOutbox, resolveEventOutboxPath } from './event-outbox.js';
 import { projectAssistantMessage, projectUserMessage, } from './conversation-projection.js';
 import { registerActiveMemoryBinding, registerMemoryLifecycleAccount, } from './memory-lifecycle.js';
@@ -155,6 +156,96 @@ function settleSessionArchive(conversationId, ok, error) {
         result: ok ? { conversation_id: key } : {},
     });
     return true;
+}
+export function dispatchSessionCommand(ctx, args) {
+    const { client, lifecycle, cacheResult, log } = ctx;
+    const { action, payload, incoming, cmdId, traceId } = args;
+    const rejectWith = (code, detail) => {
+        const rejection = normalizeRuntimeError(code);
+        if (detail && !rejection.detail) {
+            rejection.detail = String(detail).slice(0, 512);
+        }
+        const frame = lifecycle.ackRejected(cmdId, rejection, traceId);
+        if (frame)
+            cacheResult(cmdId, frame.type, frame);
+    };
+    // The command passed every protocol/security gate and now enters the
+    // business entry: canonical accepted ACK followed by reliable
+    // COMMAND_DELIVERED evidence (§4.1: acked(accepted:true) → delivered).
+    const enterBusinessEntry = () => {
+        lifecycle.ackAccepted(cmdId, traceId);
+        lifecycle.markDelivered(cmdId);
+    };
+    if (action === 'unsupported') {
+        // Profile/vocabulary mismatch (or an unregistered command word): normalized
+        // to protocol/capability_mismatch so the Gateway refreshes the profile.
+        rejectWith('unsupported_command_type');
+        return;
+    }
+    if (action === 'interrupt') {
+        // The OpenClaw host exposes no per-session cancel seam to channel plugins;
+        // declaring interrupt=true made clients offer a button that always failed
+        // with e2e_required. The profile declares interrupt=false; if a command
+        // still leaks here it is normalized to protocol/capability_mismatch.
+        log?.warn?.(`[XiotBox] session.interrupt unsupported on OpenClaw runtime cmd=${cmdId}`);
+        rejectWith('interrupt_unavailable');
+        return;
+    }
+    const conversationId = normalizeStringValue(incoming?.conversation_id ?? payload?.conversation_id) || '';
+    if (!conversationId) {
+        rejectWith('conversation_id_required');
+        return;
+    }
+    if (action === 'archive') {
+        enterBusinessEntry();
+        client.sendMessage('COMMAND_RESULT', {
+            command_id: cmdId,
+            status: 'running',
+            trace_id: traceId,
+            result: {},
+        });
+        pendingSessionArchives.set(conversationId, {
+            cmdId,
+            traceId,
+            client,
+            timer: setTimeout(() => {
+                settleSessionArchive(conversationId, false, 'session_archive_ack_timeout');
+            }, SESSION_ARCHIVE_ACK_TIMEOUT_MS),
+        });
+        // Runtime-neutral gateway contract (bot_ws.py handles this message
+        // for any bot): marks the gw_conversation_v2 row archived for this
+        // device. Idempotent; records are kept for restore.
+        client.sendMessage('SESSION.ARCHIVE', {
+            conversation_id: conversationId,
+            session_id: conversationId,
+        });
+        return;
+    }
+    // action === 'model_select'
+    const model = normalizeStringValue(incoming?.model ?? payload?.model);
+    if (!model) {
+        rejectWith('model_required');
+        return;
+    }
+    const known = lookupConversationBinding(conversationId);
+    if (!known) {
+        // No binding seen since process start: refuse instead of overriding
+        // an arbitrary session. The next chat message re-registers it. Runtime
+        // binding state loss → class=runtime (PLAN-0008 §4.5).
+        rejectWith('session_binding_not_found');
+        return;
+    }
+    enterBusinessEntry();
+    setSessionModelOverride(known.sessionKey, model);
+    log?.info?.(`[XiotBox] session.model.select cmd=${cmdId} conversation=${conversationId} model=${model}`);
+    const successPayload = {
+        command_id: cmdId,
+        status: 'success',
+        trace_id: traceId,
+        result: { model },
+    };
+    client.sendMessage('COMMAND_RESULT', successPayload);
+    cacheResult(cmdId, 'COMMAND_RESULT', successPayload);
 }
 // ── Runtime visibility (XIOT-BUG-0007) ──
 // The OpenClaw channel must present itself to the gateway as a first-class
@@ -1634,6 +1725,9 @@ export const xiotboxPlugin = {
                 throw new Error(err);
             }
             const commandCache = new Map();
+            // Canonical v1 command lifecycle evidence (XIOT-BUG-0050b): COMMAND_ACK
+            // / COMMAND_DELIVERED emission with per-command idempotency.
+            const commandLifecycle = new CommandLifecycleEmitter((type, payload) => client.sendMessage(type, payload), { ttlMs: Number(finalCfg.COMMAND_CACHE_TTL_MS) || undefined });
             const e2e = new OpenClawE2E(finalCfg, log);
             e2e.init();
             try {
@@ -1712,93 +1806,31 @@ export const xiotboxPlugin = {
             };
             const getCached = (cmdId) => {
                 pruneCache();
-                return commandCache.get(cmdId)?.payload || null;
+                const entry = commandCache.get(cmdId);
+                return entry ? { type: entry.type || 'COMMAND_RESULT', payload: entry.payload } : null;
             };
             const setCached = (cmdId, payload) => {
                 pruneCache();
-                commandCache.set(cmdId, { ts: Date.now(), payload });
+                commandCache.set(cmdId, { ts: Date.now(), type: 'COMMAND_RESULT', payload });
+            };
+            // Non-COMMAND_RESULT terminal frames (canonical ACK rejections,
+            // XIOT-BUG-0050b) replay with their own frame type on redelivery.
+            const setCachedFrame = (cmdId, type, payload) => {
+                pruneCache();
+                commandCache.set(cmdId, { ts: Date.now(), type, payload });
             };
             // Session command handler (XIOT-BUG-0006). Runs before the chat/E2E
             // path: session.* commands carry plain JSON without an OGE2E1 envelope.
-            const handleSessionCommand = async (args) => {
-                const { action, payload, incoming, cmdId, traceId } = args;
-                const sendFailed = (error) => {
-                    const failPayload = {
-                        command_id: cmdId,
-                        status: 'failed',
-                        trace_id: traceId,
-                        error,
-                        result: {},
-                    };
-                    client.sendMessage('COMMAND_RESULT', failPayload);
-                    setCached(cmdId, failPayload);
-                };
-                if (action === 'unsupported') {
-                    sendFailed('unsupported_command_type');
-                    return;
-                }
-                if (action === 'interrupt') {
-                    // The OpenClaw host exposes no per-session cancel seam to channel
-                    // plugins; declaring interrupt=true made clients offer a button that
-                    // always failed with e2e_required. Fail honestly — the gateway
-                    // capability is corrected to false in the same change — until the
-                    // host runtime ships a cancel API.
-                    log?.warn?.(`[XiotBox] session.interrupt unsupported on OpenClaw runtime cmd=${cmdId}`);
-                    sendFailed('interrupt_unavailable');
-                    return;
-                }
-                const conversationId = normalizeStringValue(incoming?.conversation_id ?? payload?.conversation_id) || '';
-                if (!conversationId) {
-                    sendFailed('conversation_id_required');
-                    return;
-                }
-                if (action === 'archive') {
-                    client.sendMessage('COMMAND_RESULT', {
-                        command_id: cmdId,
-                        status: 'running',
-                        trace_id: traceId,
-                        result: {},
-                    });
-                    pendingSessionArchives.set(conversationId, {
-                        cmdId,
-                        traceId,
-                        client,
-                        timer: setTimeout(() => {
-                            settleSessionArchive(conversationId, false, 'session_archive_ack_timeout');
-                        }, SESSION_ARCHIVE_ACK_TIMEOUT_MS),
-                    });
-                    // Runtime-neutral gateway contract (bot_ws.py handles this message
-                    // for any bot): marks the gw_conversation_v2 row archived for this
-                    // device. Idempotent; records are kept for restore.
-                    client.sendMessage('SESSION.ARCHIVE', {
-                        conversation_id: conversationId,
-                        session_id: conversationId,
-                    });
-                    return;
-                }
-                // action === 'model_select'
-                const model = normalizeStringValue(incoming?.model ?? payload?.model);
-                if (!model) {
-                    sendFailed('model_required');
-                    return;
-                }
-                const known = lookupConversationBinding(conversationId);
-                if (!known) {
-                    // No binding seen since process start: refuse instead of overriding
-                    // an arbitrary session. The next chat message re-registers it.
-                    sendFailed('session_binding_not_found');
-                    return;
-                }
-                setSessionModelOverride(known.sessionKey, model);
-                log?.info?.(`[XiotBox] session.model.select cmd=${cmdId} conversation=${conversationId} model=${model}`);
-                const successPayload = {
-                    command_id: cmdId,
-                    status: 'success',
-                    trace_id: traceId,
-                    result: { model },
-                };
-                client.sendMessage('COMMAND_RESULT', successPayload);
-                setCached(cmdId, successPayload);
+            // Canonical ACK/DELIVERED lifecycle emission lives in
+            // dispatchSessionCommand (XIOT-BUG-0050b).
+            const handleSessionCommand = (args) => {
+                dispatchSessionCommand({
+                    client,
+                    lifecycle: commandLifecycle,
+                    cacheResult: setCachedFrame,
+                    log,
+                    deviceId: finalCfg.DEVICE_ID,
+                }, args);
             };
             client.on('SESSION.ARCHIVE_ACK', (ackPayload) => {
                 settleSessionArchiveAck(ackPayload);
@@ -1858,17 +1890,28 @@ export const xiotboxPlugin = {
                         return;
                     const cached = getCached(cmdId);
                     if (cached) {
-                        client.sendMessage('COMMAND_RESULT', cached);
+                        // Gateway redelivery: replay the exact cached terminal frame
+                        // (canonical ACK rejection or COMMAND_RESULT) — replay stays
+                        // idempotent (XIOT-BUG-0050b, PLAN-0008 §4.6).
+                        client.sendMessage(cached.type, cached.payload);
                         return;
                     }
                     const traceId = payload?.trace_id || payload?.payload?.trace_id || null;
-                    // ACK
-                    client.sendMessage('COMMAND_RESULT', {
-                        command_id: cmdId,
-                        status: 'acked',
-                        trace_id: traceId,
-                        result: {},
-                    });
+                    // Structured rejection on the canonical COMMAND_ACK (PLAN-0008
+                    // §4.1/§4.5): protocol/security gates that fail answer
+                    // COMMAND_ACK {accepted:false, rejection:{class,code,detail?}}
+                    // before any business processing; the Gateway terminalizes `failed`
+                    // from this ACK in the same transaction. Classification always goes
+                    // through the registered exact-code table — no string prefixes.
+                    const rejectCommand = (code, detail) => {
+                        const rejection = normalizeRuntimeError(code);
+                        if (detail && !rejection.detail) {
+                            rejection.detail = String(detail).slice(0, 512);
+                        }
+                        const frame = commandLifecycle.ackRejected(cmdId, rejection, traceId);
+                        if (frame)
+                            setCachedFrame(cmdId, frame.type, frame);
+                    };
                     const incoming = payload?.payload || payload || {};
                     // ── Session command dispatch (XIOT-BUG-0006) ──
                     // Non-chat commands carry plain JSON and no OGE2E1 envelope; they
@@ -1880,7 +1923,7 @@ export const xiotboxPlugin = {
                         ?? '';
                     const sessionAction = resolveSessionCommandAction(sessionCommandType);
                     if (sessionAction !== 'chat') {
-                        await handleSessionCommand({
+                        handleSessionCommand({
                             action: sessionAction,
                             payload,
                             incoming,
@@ -1914,15 +1957,10 @@ export const xiotboxPlugin = {
                     }
                     const env = (incoming?.magic === 'OGE2E1' ? incoming : incoming?.e2e) || null;
                     if (!env || env.magic !== 'OGE2E1') {
-                        const failPayload = {
-                            command_id: cmdId,
-                            status: 'failed',
-                            trace_id: traceId,
-                            error: 'e2e_required',
-                            result: {},
-                        };
-                        client.sendMessage('COMMAND_RESULT', failPayload);
-                        setCached(cmdId, failPayload);
+                        // Chat commands without an OGE2E1 envelope violate the declared
+                        // protocol. E2E stays mandatory (PLAN-0008 §5.3); classified as
+                        // protocol structure error (§4.5).
+                        rejectCommand('e2e_required');
                         return;
                     }
                     const contentType = incoming?.content_type || incoming?.contentType || 'text/markdown';
@@ -1932,15 +1970,7 @@ export const xiotboxPlugin = {
                         conversationBinding = resolveConversationBinding(incoming, finalCfg.DEVICE_ID);
                     }
                     catch (err) {
-                        const failPayload = {
-                            command_id: cmdId,
-                            status: 'failed',
-                            trace_id: traceId,
-                            error: err instanceof Error ? err.message : 'invalid conversation binding',
-                            result: {},
-                        };
-                        client.sendMessage('COMMAND_RESULT', failPayload);
-                        setCached(cmdId, failPayload);
+                        rejectCommand('conversation_binding_invalid', err instanceof Error ? err.message : 'invalid conversation binding');
                         return;
                     }
                     const contextEpochResolution = resolveInboundContextEpoch({
@@ -1965,30 +1995,27 @@ export const xiotboxPlugin = {
                         });
                     }
                     catch (_err) {
-                        const failPayload = {
-                            command_id: cmdId,
-                            status: 'failed',
-                            trace_id: traceId,
-                            error: 'e2e_decrypt_failed',
-                            result: {},
-                        };
-                        client.sendMessage('COMMAND_RESULT', failPayload);
-                        setCached(cmdId, failPayload);
+                        // Envelope unparseable/undecryptable or AAD mismatch: protocol
+                        // structure error (PLAN-0008 §4.5) — not yet an identity verdict.
+                        rejectCommand('e2e_decrypt_failed');
                         return;
                     }
                     const replyPeers = e2e.collectReplyPeers(incoming);
                     if (!replyPeers.length) {
-                        const failPayload = {
-                            command_id: cmdId,
-                            status: 'failed',
-                            trace_id: traceId,
-                            error: e2e.peerTrustError || 'e2e_peer_missing',
-                            result: {},
-                        };
-                        client.sendMessage('COMMAND_RESULT', failPayload);
-                        setCached(cmdId, failPayload);
+                        // Structurally valid material that fails verification / trust
+                        // pinning / authorization normalizes to class=policy (§4.5 row 3).
+                        rejectCommand(e2e.peerTrustError || 'e2e_peer_missing');
                         return;
                     }
+                    // All protocol/security gates passed (XIOT-BUG-0050b): canonical
+                    // accept then reliable delivery evidence at the business entry
+                    // (PLAN-0008 §4.1: acked(accepted:true) → delivered). The durable
+                    // message.user projection below carries the same command_id with
+                    // event id `${cmdId}:message:user` (buildChatUserMessageEventId) —
+                    // the §4.6 receive unit the Gateway pairs atomically. Idempotent:
+                    // markDelivered is a no-op on replay.
+                    commandLifecycle.ackAccepted(cmdId, traceId);
+                    commandLifecycle.markDelivered(cmdId);
                     const buildEncryptedResult = (replyText, seq, sessionUsage, streamMeta) => {
                         const e2eMulti = {};
                         let primaryEnv = null;
