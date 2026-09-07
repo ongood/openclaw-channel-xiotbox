@@ -61,16 +61,72 @@ test('runtime list entry publishes the 0050a capability declaration under `capab
   assert.equal(runtime.capabilities['openclaw.binding_registry'], 'process_local');
 });
 
-test('both declaration wire sites publish the same builder output', () => {
+test('both declaration wire sites (RUNTIMES.LIST + SESSION.REGISTER) declare runtime_kind + capabilities', () => {
   // The declaration travels on exactly two wire sites: the RUNTIMES.LIST
   // runtime entry (bot_ws._handle_runtimes_list) and the SESSION.REGISTER
-  // payload (platform_service.register_bot_session). Both must come from the
-  // single 0050a builder — a third site or a missing site would silently
+  // payload (platform_service.register_bot_session). Each site must carry
+  // runtime_kind AND capabilities together, from the single 0050a builder —
+  // a third site, a missing site, or a kind-less site would silently
   // desynchronize the declaration between runtimes listing and session
-  // registration. Pinned against the built channel.js (the shipped artifact).
+  // registration. Pinned against the built channel.js (the shipped artifact),
+  // structurally per site — not just by a global count.
   const built = readFileSync(new URL('../dist/src/channel.js', import.meta.url), 'utf-8');
-  const siteCount = built.split('capabilities: buildOpenclawCapabilityDeclaration()').length - 1;
-  assert.equal(siteCount, 2, 'RUNTIMES.LIST entry + SESSION.REGISTER must both declare');
-  // And the runtime kind rides with both payloads, not just the first.
-  assert.equal(built.includes('runtime_kind: OPENCLAW_RUNTIME_KIND'), true);
+
+  const countOf = (haystack, needle) => haystack.split(needle).length - 1;
+
+  // Exactly two declaration sites on the whole built artifact.
+  assert.equal(
+    countOf(built, 'capabilities: buildOpenclawCapabilityDeclaration()'),
+    2,
+    'RUNTIMES.LIST entry + SESSION.REGISTER must both declare capabilities',
+  );
+  assert.equal(
+    countOf(built, 'runtime_kind: OPENCLAW_RUNTIME_KIND'),
+    2,
+    'both declaration sites must declare runtime_kind',
+  );
+
+  // ── Site 1: the RUNTIMES.LIST runtime entry builder ──
+  const listStart = built.indexOf('export function buildOpenclawRuntimeListPayload(');
+  assert.notEqual(listStart, -1, 'runtime list builder present');
+  const listEnd = built.indexOf('\nfunction ', listStart);
+  assert.notEqual(listEnd, -1, 'runtime list builder region delimited');
+  const listRegion = built.slice(listStart, listEnd);
+  assert.equal(
+    countOf(listRegion, 'runtime_kind: OPENCLAW_RUNTIME_KIND'),
+    1,
+    'RUNTIMES.LIST entry declares runtime_kind',
+  );
+  assert.equal(
+    countOf(listRegion, 'capabilities: buildOpenclawCapabilityDeclaration()'),
+    1,
+    'RUNTIMES.LIST entry declares capabilities',
+  );
+
+  // ── Site 2: the SESSION.REGISTER payload sender ──
+  const registerStart = built.indexOf('const sendSessionRegister = (entry) => {');
+  assert.notEqual(registerStart, -1, 'session register sender present');
+  const registerEnd = built.indexOf("client.on('SESSION.REGISTER_ACK'", registerStart);
+  assert.notEqual(registerEnd, -1, 'session register sender region delimited');
+  const registerRegion = built.slice(registerStart, registerEnd);
+  assert.equal(
+    countOf(registerRegion, 'runtime_kind: OPENCLAW_RUNTIME_KIND'),
+    1,
+    'SESSION.REGISTER payload declares runtime_kind',
+  );
+  assert.equal(
+    countOf(registerRegion, 'capabilities: buildOpenclawCapabilityDeclaration()'),
+    1,
+    'SESSION.REGISTER payload declares capabilities',
+  );
+
+  // The two regions are distinct structures that together account for the
+  // global count — no third site hides outside them.
+  assert.ok(registerStart > listStart, 'wire sites live in distinct regions');
+  assert.equal(
+    countOf(built, 'capabilities: buildOpenclawCapabilityDeclaration()'),
+    countOf(listRegion, 'capabilities: buildOpenclawCapabilityDeclaration()') +
+      countOf(registerRegion, 'capabilities: buildOpenclawCapabilityDeclaration()'),
+    'both sites are fully accounted for by the two structures',
+  );
 });
