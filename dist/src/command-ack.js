@@ -124,17 +124,30 @@ export function buildChatUserMessageEventId(commandId) {
 const DEFAULT_EVIDENCE_TTL_MS = 24 * 60 * 60 * 1000;
 const EVIDENCE_MAX_ENTRIES = 5000;
 // Owns the per-command ACK/DELIVERED evidence emission. One instance per
-// gateway account/connection. Rejections are deduplicated so a repeated
-// rejection for the same command never double-sends, and delivered evidence
-// is emitted at most once per command_id (replay idempotent, §4.6).
+// gateway account/connection. The command_id is the SOLE idempotency key:
+// a command may be claimed (accepted) exactly once, delivered evidence is
+// emitted at most once, and an already-accepted command_id can never be
+// re-classified to accepted:false. Duplicates/redeliveries replay the
+// recorded lifecycle evidence instead of re-entering the business path.
+//
+// Lifecycle separation (XIOT-BUG-0050b R1): ACTIVE execution ownership is
+// never evicted (no TTL, no capacity pressure); it is released only by an
+// explicit markTerminal() AFTER the caller cached the terminal result.
+// Terminal ownership, rejection ACKs and DELIVERED frames are evictable
+// replay evidence (ttlMs / maxEntries) — duplicates of terminal commands
+// must hit the caller's terminal cache instead, so eviction never re-opens
+// duplicate execution.
 export class CommandLifecycleEmitter {
     constructor(send, opts) {
         this.rejectedAcks = new Map();
-        this.delivered = new Map();
+        this.ownership = new Map();
+        this.deliveredFrames = new Map();
         this.send = typeof send === 'function' ? send : () => { };
         this.now = typeof opts?.now === 'function' ? opts.now : Date.now;
         const ttl = Number(opts?.ttlMs);
         this.ttlMs = Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_EVIDENCE_TTL_MS;
+        const maxEntries = Number(opts?.maxEntries);
+        this.maxEntries = Number.isFinite(maxEntries) && maxEntries > 0 ? maxEntries : EVIDENCE_MAX_ENTRIES;
     }
     prune() {
         const cutoff = this.now() - this.ttlMs;
@@ -142,34 +155,124 @@ export class CommandLifecycleEmitter {
             if (entry.ts < cutoff)
                 this.rejectedAcks.delete(id);
         }
-        for (const [id, ts] of this.delivered) {
-            if (ts < cutoff)
-                this.delivered.delete(id);
+        for (const [id, entry] of this.ownership) {
+            // ONLY terminal ownership ages out — active execution ownership is
+            // never a prune victim, whatever ttlMs says.
+            if (entry.terminal && (entry.terminalAt ?? 0) < cutoff)
+                this.ownership.delete(id);
         }
-        while (this.rejectedAcks.size > EVIDENCE_MAX_ENTRIES) {
-            const firstKey = this.rejectedAcks.keys().next().value;
-            if (firstKey === undefined)
-                break;
-            this.rejectedAcks.delete(firstKey);
+        for (const [id, entry] of this.deliveredFrames) {
+            if (entry.ts < cutoff)
+                this.deliveredFrames.delete(id);
         }
-        while (this.delivered.size > EVIDENCE_MAX_ENTRIES) {
-            const firstKey = this.delivered.keys().next().value;
-            if (firstKey === undefined)
+        this.evictEvictableOverflow(this.rejectedAcks, (entry) => entry.ts);
+        this.evictEvictableOverflow(this.deliveredFrames, (entry) => entry.ts);
+        this.evictOwnershipOverflow();
+    }
+    evictEvictableOverflow(map, tsOf) {
+        while (map.size > this.maxEntries) {
+            let oldestId;
+            let oldestTs = Infinity;
+            for (const [id, entry] of map) {
+                const ts = tsOf(entry);
+                if (ts < oldestTs) {
+                    oldestTs = ts;
+                    oldestId = id;
+                }
+            }
+            if (oldestId === undefined)
                 break;
-            this.delivered.delete(firstKey);
+            map.delete(oldestId);
         }
     }
+    // Capacity pressure may only evict TERMINAL ownership entries, oldest
+    // terminal first. Active ownership is untouchable: if every entry is still
+    // active the map grows until they terminalize (bounded by real in-flight
+    // work).
+    evictOwnershipOverflow() {
+        const terminalEntries = [...this.ownership.entries()]
+            .filter(([, entry]) => entry.terminal)
+            .sort((a, b) => (a[1].terminalAt ?? 0) - (b[1].terminalAt ?? 0));
+        let overflow = terminalEntries.length - this.maxEntries;
+        for (const [id] of terminalEntries) {
+            if (overflow <= 0)
+                break;
+            this.ownership.delete(id);
+            overflow -= 1;
+        }
+    }
+    // Per-command execution gate. First call for a command_id: emits the
+    // canonical COMMAND_ACK {accepted:true} and returns true — the caller may
+    // proceed into the business path. Any later call for the same command_id
+    // (redelivery / duplicate / same-tick race): replays the recorded
+    // lifecycle evidence (accepted ACK plus COMMAND_DELIVERED when already
+    // emitted) and returns false — the caller MUST short-circuit instead of
+    // re-entering the business path. A rejected command_id never re-claims.
     ackAccepted(commandId, traceId) {
-        const frame = buildCanonicalAck(commandId, { accepted: true, traceId });
+        const id = trimId(commandId);
+        if (!id)
+            return false;
+        const existing = this.ownership.get(id);
+        if (existing) {
+            this.send(existing.frame.type, existing.frame);
+            const delivered = this.deliveredFrames.get(id);
+            if (delivered)
+                this.send(delivered.frame.type, delivered.frame);
+            return false;
+        }
+        const frame = buildCanonicalAck(id, { accepted: true, traceId });
         if (!frame)
             return false;
+        this.prune();
+        this.ownership.set(id, { frame, claimedAt: this.now(), terminal: false });
         this.send(frame.type, frame);
         return true;
     }
+    isAccepted(commandId) {
+        return this.ownership.has(trimId(commandId));
+    }
+    // Releases the execution ownership AFTER the caller cached the terminal
+    // result (ordering contract: cache first, then release — no window where a
+    // duplicate can re-claim). The entry stays as evictable replay evidence
+    // until TTL/capacity pruning removes it; while present, duplicates keep
+    // replaying the recorded evidence. Returns true when an ACTIVE ownership
+    // was released; false for unknown/rejected/already-terminal ids.
+    markTerminal(commandId) {
+        const id = trimId(commandId);
+        if (!id)
+            return false;
+        const entry = this.ownership.get(id);
+        if (!entry || entry.terminal)
+            return false;
+        entry.terminal = true;
+        entry.terminalAt = this.now();
+        return true;
+    }
+    // Replays the recorded lifecycle evidence for an accepted command (accepted
+    // ACK plus COMMAND_DELIVERED when recorded). Returns true when anything was
+    // replayed. Used on gateway redelivery while the terminal result is still
+    // pending; once the terminal result is cached the caller replays that
+    // instead.
+    replayLifecycleEvidence(commandId) {
+        const id = trimId(commandId);
+        if (!id)
+            return false;
+        const accepted = this.ownership.get(id);
+        if (!accepted)
+            return false;
+        this.send(accepted.frame.type, accepted.frame);
+        const delivered = this.deliveredFrames.get(id);
+        if (delivered)
+            this.send(delivered.frame.type, delivered.frame);
+        return true;
+    }
     // Sends the structured rejection ACK. Idempotent per command_id: a second
-    // rejection for an already-rejected command is suppressed. Returns the
-    // emitted frame (or the previously emitted one) so callers can cache it for
-    // gateway-side redelivery replay.
+    // rejection for an already-rejected command is suppressed, and an
+    // ALREADY-ACCEPTED command_id can never be re-classified to accepted:false
+    // (XIOT-BUG-0050b R1: no contradictory lifecycle) — the recorded evidence
+    // is replayed and null is returned so nothing new is cached. Returns the
+    // emitted frame (or the previously emitted one) so callers can cache it
+    // for gateway-side redelivery replay.
     ackRejected(commandId, rejection, traceId) {
         const id = trimId(commandId);
         if (!id)
@@ -177,6 +280,10 @@ export class CommandLifecycleEmitter {
         const existing = this.rejectedAcks.get(id);
         if (existing)
             return existing.frame;
+        if (this.ownership.has(id)) {
+            this.replayLifecycleEvidence(id);
+            return null;
+        }
         const frame = buildCanonicalAck(id, { accepted: false, rejection, traceId });
         if (!frame)
             return null;
@@ -202,24 +309,25 @@ export class CommandLifecycleEmitter {
     }
     // Emits the reliable COMMAND_DELIVERED evidence at the business entry.
     // Returns false (and sends nothing) when this command_id was already
-    // delivered, was rejected, or the id is empty.
+    // delivered, was rejected, or the id is empty. The frame is stored so
+    // duplicates replay the exact recorded evidence.
     markDelivered(commandId) {
         const id = trimId(commandId);
         if (!id)
             return false;
         if (this.rejectedAcks.has(id))
             return false;
-        if (this.delivered.has(id))
+        if (this.deliveredFrames.has(id))
             return false;
         const frame = buildCommandDelivered(id);
         if (!frame)
             return false;
         this.prune();
-        this.delivered.set(id, this.now());
+        this.deliveredFrames.set(id, { frame, ts: this.now() });
         this.send(frame.type, frame);
         return true;
     }
     hasDelivered(commandId) {
-        return this.delivered.has(trimId(commandId));
+        return this.deliveredFrames.has(trimId(commandId));
     }
 }

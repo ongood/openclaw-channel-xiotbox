@@ -29,7 +29,9 @@ import {
 
 import {
   dispatchSessionCommand,
+  pendingSessionArchives,
   rememberConversationBinding,
+  settleSessionArchiveAck,
 } from '../dist/src/channel.js';
 
 import { projectUserMessage } from '../dist/src/conversation-projection.js';
@@ -230,6 +232,9 @@ test('archive delivers then enters its real lifecycle (running ack), no run even
   assert.deepEqual(types, ['COMMAND_ACK', 'COMMAND_DELIVERED', 'COMMAND_RESULT', 'SESSION.ARCHIVE']);
   assert.equal(client.sent[2].payload.status, 'running');
   assert.ok(!JSON.stringify(client.sent).includes('message.user'));
+  // Settle the pending archive so its 8s ack-timeout timer does not keep the
+  // test process alive.
+  settleSessionArchiveAck({ ok: true, archived: true, conversation_id: 'conv_noturn_2', session_id: '' });
 });
 
 test('unknown command vocabulary is protocol/capability_mismatch, never runtime capability_unsupported', () => {
@@ -352,3 +357,327 @@ test('canonical ACK builder shape', () => {
   assert.deepEqual(rejected.rejection, { class: 'protocol', code: 'e2e_required' });
   assert.equal(buildCanonicalAck('', { accepted: true }), null);
 });
+
+// ── R1 regressions: per-command execution gate (command_id is the sole
+//    idempotency key). A redelivery arriving between accepted ACK/DELIVERED
+//    and the terminal COMMAND_RESULT must never re-enter the business path,
+//    never re-claim, and never re-classify the command to accepted:false —
+//    it replays the recorded lifecycle evidence instead. ─────────────────────
+
+test('ackAccepted is a claim gate: duplicate replays evidence without re-claiming', () => {
+  const client = fakeClient();
+  const emitter = new CommandLifecycleEmitter(client.sendMessage);
+
+  // First delivery wins the claim and emits the canonical evidence.
+  assert.equal(emitter.ackAccepted('cmd_gate_1', 'tr_g'), true);
+  assert.equal(emitter.markDelivered('cmd_gate_1'), true);
+  assert.equal(client.sent.length, 2);
+
+  // Gateway redelivers the same command before any terminal result exists.
+  assert.equal(emitter.ackAccepted('cmd_gate_1', 'tr_g'), false);
+  assert.deepEqual(
+    client.sent.slice(2).map((f) => f.type),
+    ['COMMAND_ACK', 'COMMAND_DELIVERED'],
+    'recorded lifecycle evidence is replayed',
+  );
+  assert.equal(client.sent.filter((f) => f.type === 'COMMAND_DELIVERED').length, 2);
+  assert.ok(!client.sent.some((f) => f.type === 'COMMAND_RESULT'));
+});
+
+test('chat admission contract: redelivery between accepted and terminal replays evidence, never re-claims or re-classifies', () => {
+  const client = fakeClient();
+  const lifecycle = new CommandLifecycleEmitter(client.sendMessage);
+  const cmdId = 'cmd_chat_mid_1';
+
+  // First delivery (mirrors the channel chat handler ordering: gates passed
+  // → claim → deliver → business runs; terminal result NOT yet cached).
+  assert.equal(lifecycle.ackAccepted(cmdId), true);
+  assert.equal(lifecycle.markDelivered(cmdId), true);
+
+  // Redelivery mid-flight: the admission gate replays the recorded evidence
+  // and the business path is never re-entered.
+  assert.equal(lifecycle.isAccepted(cmdId), true);
+  const beforeReplay = client.sent.length;
+  assert.equal(lifecycle.replayLifecycleEvidence(cmdId), true);
+  assert.deepEqual(
+    client.sent.slice(beforeReplay).map((f) => f.type),
+    ['COMMAND_ACK', 'COMMAND_DELIVERED'],
+  );
+
+  // A same-tick duplicate that lost the early gate cannot re-win the claim.
+  assert.equal(lifecycle.ackAccepted(cmdId), false);
+
+  // A redelivery with different/invalid content that reaches the rejection
+  // path must NOT re-classify the command to accepted:false.
+  const frame = lifecycle.ackRejected(cmdId, buildAckRejection('protocol', 'e2e_required'));
+  assert.equal(frame, null, 'already-accepted command_id can never be rejected');
+  assert.ok(
+    !client.sent.some((f) => f.type === 'COMMAND_ACK' && f.payload.accepted === false),
+    'no contradictory accepted:false for an accepted command_id',
+  );
+  assert.deepEqual(
+    client.sent.slice(-2).map((f) => f.type),
+    ['COMMAND_ACK', 'COMMAND_DELIVERED'],
+    'existing state is replayed instead',
+  );
+
+  // Rejection evidence and delivery evidence stay independent for other ids.
+  assert.equal(lifecycle.replayLifecycleEvidence('cmd_unknown_id'), false);
+});
+
+test('no-turn redelivery between DELIVERED and terminal does not re-execute the action', () => {
+  const client = fakeClient();
+  const ctx = sessionCtx(client); // one shared emitter, like the real connection
+  rememberConversationBinding('conv_redeliver_1', {
+    sessionKey: 'agent:main:xiotbox:dev1:conv_redeliver_1:0',
+    agentId: 'main',
+    contextEpoch: 0,
+  });
+  const args = {
+    action: 'model_select',
+    payload: {},
+    incoming: { conversation_id: 'conv_redeliver_1', model: 'provider/model-a' },
+    cmdId: 'cmd_redeliver_1',
+    traceId: null,
+  };
+
+  dispatchSessionCommand(ctx, args);
+  assert.deepEqual(
+    client.sent.map((f) => f.type),
+    ['COMMAND_ACK', 'COMMAND_DELIVERED', 'COMMAND_RESULT'],
+  );
+  const afterFirst = client.sent.length;
+
+  // Redelivery before the terminal result is consumable: no business
+  // re-entry, only lifecycle evidence replay.
+  dispatchSessionCommand(ctx, args);
+  const replayed = client.sent.slice(afterFirst);
+  assert.deepEqual(replayed.map((f) => f.type), ['COMMAND_ACK', 'COMMAND_DELIVERED']);
+  assert.equal(
+    client.sent.filter((f) => f.type === 'COMMAND_RESULT').length,
+    1,
+    'the action executed exactly once',
+  );
+});
+
+test('no-turn contradiction guard: same command_id with different invalid content cannot re-classify to accepted:false', () => {
+  const client = fakeClient();
+  const ctx = sessionCtx(client);
+  rememberConversationBinding('conv_redeliver_2', {
+    sessionKey: 'agent:main:xiotbox:dev1:conv_redeliver_2:0',
+    agentId: 'main',
+    contextEpoch: 0,
+  });
+  const good = {
+    action: 'model_select',
+    payload: {},
+    incoming: { conversation_id: 'conv_redeliver_2', model: 'provider/model-a' },
+    cmdId: 'cmd_contra_1',
+    traceId: null,
+  };
+  dispatchSessionCommand(ctx, good);
+  assert.equal(
+    client.sent.filter((f) => f.type === 'COMMAND_ACK' && f.payload.accepted === true).length,
+    1,
+  );
+
+  // Redelivery with DIFFERENT, invalid content under the same command_id:
+  // must not emit accepted:false; must replay the recorded state instead.
+  const bad = {
+    action: 'model_select',
+    payload: {},
+    incoming: { conversation_id: 'conv_redeliver_2' }, // missing model
+    cmdId: 'cmd_contra_1',
+    traceId: null,
+  };
+  dispatchSessionCommand(ctx, bad);
+
+  assert.equal(
+    client.sent.filter((f) => f.type === 'COMMAND_ACK' && f.payload.accepted === false).length,
+    0,
+    'no contradictory accepted:false after acceptance',
+  );
+  assert.deepEqual(
+    client.sent.slice(3).map((f) => f.type),
+    ['COMMAND_ACK', 'COMMAND_DELIVERED'],
+  );
+});
+
+test('archive redelivery does not re-register the pending archive or re-send SESSION.ARCHIVE', () => {
+  const client = fakeClient();
+  const ctx = sessionCtx(client);
+  const args = {
+    action: 'archive',
+    payload: {},
+    incoming: { conversation_id: 'conv_redeliver_3' },
+    cmdId: 'cmd_arch_redeliver_1',
+    traceId: null,
+  };
+
+  dispatchSessionCommand(ctx, args);
+  assert.deepEqual(
+    client.sent.map((f) => f.type),
+    ['COMMAND_ACK', 'COMMAND_DELIVERED', 'COMMAND_RESULT', 'SESSION.ARCHIVE'],
+  );
+  const afterFirst = client.sent.length;
+  assert.equal(pendingSessionArchives.has('conv_redeliver_3'), true);
+
+  dispatchSessionCommand(ctx, args);
+  const replayed = client.sent.slice(afterFirst);
+  assert.deepEqual(replayed.map((f) => f.type), ['COMMAND_ACK', 'COMMAND_DELIVERED']);
+  assert.ok(!replayed.some((f) => f.type === 'SESSION.ARCHIVE'));
+  assert.equal(
+    client.sent.filter((f) => f.type === 'SESSION.ARCHIVE').length,
+    1,
+    'the archive action fired exactly once',
+  );
+  assert.equal(pendingSessionArchives.has('conv_redeliver_3'), true);
+
+  // Settle so the 8s ack-timeout timer does not keep the process alive.
+  settleSessionArchiveAck({ ok: true, archived: true, conversation_id: 'conv_redeliver_3', session_id: '' });
+});
+
+// ── R1 round-3 regression: execution ownership ≠ evictable evidence. ────────
+// In-flight execution ownership must NEVER be dropped by the evidence TTL or
+// capacity pressure; only an explicit terminal result releases it. Otherwise a
+// long task / short ttlMs / high concurrency resurrects duplicate execution.
+
+function fakeClock() {
+  let t = 1_000;
+  return {
+    now: () => t,
+    advance: (ms) => { t += ms; },
+  };
+}
+
+test('execution ownership survives evidence TTL: non-terminal accepted command can never be re-claimed', () => {
+  const clock = fakeClock();
+  const client = fakeClient();
+  const emitter = new CommandLifecycleEmitter(client.sendMessage, { now: clock.now, ttlMs: 5 });
+
+  assert.equal(emitter.ackAccepted('cmd_own_ttl_1'), true);
+  assert.equal(emitter.markDelivered('cmd_own_ttl_1'), true);
+
+  // Long task runs far past the evidence TTL; new evidence inserts trigger
+  // prune, which must never touch ACTIVE ownership.
+  clock.advance(10_000);
+  emitter.ackAccepted('cmd_other_ttl_1');
+  assert.equal(emitter.hasRejectedAck('cmd_own_ttl_1'), false);
+  assert.equal(emitter.isAccepted('cmd_own_ttl_1'), true, 'active ownership survives TTL');
+
+  // A redelivered duplicate cannot re-claim execution. The DELIVERED replay
+  // evidence legitimately aged out (it is evictable evidence, not ownership)
+  // but the ownership frame survives and the claim is refused.
+  const before = client.sent.length;
+  assert.equal(emitter.ackAccepted('cmd_own_ttl_1'), false);
+  assert.deepEqual(
+    client.sent.slice(before).map((f) => f.type),
+    ['COMMAND_ACK'],
+    'ownership replay survives; only the claim is refused',
+  );
+  assert.equal(
+    client.sent.filter((f) => f.type === 'COMMAND_DELIVERED').length,
+    1,
+    'no fresh delivery evidence: the command was never re-executed',
+  );
+});
+
+test('execution ownership survives capacity pressure: only terminal entries are evicted', () => {
+  const client = fakeClient();
+  const emitter = new CommandLifecycleEmitter(client.sendMessage, { maxEntries: 2 });
+
+  assert.equal(emitter.ackAccepted('cmd_own_cap_1'), true);
+  assert.equal(emitter.markDelivered('cmd_own_cap_1'), true);
+
+  // Flood with terminal commands to force capacity eviction of the oldest
+  // terminal entries; the ACTIVE ownership must never be a victim.
+  for (let i = 0; i < 6; i++) {
+    const id = `cmd_cap_flood_${i}`;
+    assert.equal(emitter.ackAccepted(id), true);
+    emitter.markDelivered(id);
+    assert.equal(emitter.markTerminal(id), true);
+  }
+
+  assert.equal(emitter.isAccepted('cmd_own_cap_1'), true, 'active ownership survives capacity pressure');
+  assert.equal(emitter.ackAccepted('cmd_own_cap_1'), false, 'non-terminal ownership cannot be re-claimed');
+});
+
+test('terminal result releases ownership: duplicates replay the cached result, never re-execute', () => {
+  const clock = fakeClock();
+  const client = fakeClient();
+  const cache = new Map();
+  const events = [];
+  const lifecycle = new CommandLifecycleEmitter(client.sendMessage, { now: clock.now, ttlMs: 5 });
+  const ctx = {
+    client,
+    lifecycle,
+    cacheResult: (id, type, payload) => {
+      events.push('cache');
+      cache.set(id, { type, payload });
+    },
+    cachedResult: (id) => cache.get(id) || null,
+    log: null,
+    deviceId: 'dev1',
+  };
+  const origMarkTerminal = lifecycle.markTerminal.bind(lifecycle);
+  lifecycle.markTerminal = (id) => {
+    events.push('release');
+    return origMarkTerminal(id);
+  };
+
+  rememberConversationBinding('conv_own_term_1', {
+    sessionKey: 'agent:main:xiotbox:dev1:conv_own_term_1:0',
+    agentId: 'main',
+    contextEpoch: 0,
+  });
+  const args = {
+    action: 'model_select',
+    payload: {},
+    incoming: { conversation_id: 'conv_own_term_1', model: 'provider/model-a' },
+    cmdId: 'cmd_own_term_1',
+    traceId: null,
+  };
+
+  dispatchSessionCommand(ctx, args);
+  assert.deepEqual(events, ['cache', 'release'], 'cache write strictly precedes ownership release — no empty window');
+  assert.deepEqual(
+    client.sent.map((f) => f.type),
+    ['COMMAND_ACK', 'COMMAND_DELIVERED', 'COMMAND_RESULT'],
+  );
+
+  // Immediately after terminal: duplicate replays the cached result — one
+  // more COMMAND_RESULT frame (the replay) but NO new claim evidence and no
+  // re-execution (no new 'cache' event).
+  dispatchSessionCommand(ctx, args);
+  assert.deepEqual(events, ['cache', 'release'], 'no re-execution on terminal replay');
+  assert.equal(client.sent.filter((f) => f.type === 'COMMAND_ACK').length, 1);
+  assert.equal(client.sent.length, 4);
+  assert.equal(client.sent[3].type, 'COMMAND_RESULT');
+
+  // Long after the evidence TTL (the terminal ownership entry itself is
+  // pruned): the duplicate MUST hit the terminal cache — still no re-claim
+  // (no second COMMAND_ACK for this command_id) and no re-execution (no new
+  // 'cache' event). Frames are filtered by command_id because the prune
+  // probe inserts an unrelated rejection ACK into the same client.
+  clock.advance(10_000);
+  emitter_probe_prune(lifecycle);
+  dispatchSessionCommand(ctx, args);
+  assert.deepEqual(events, ['cache', 'release'], 'post-release duplicates go through the terminal cache, never re-execute');
+  const ownFrames = client.sent.filter((f) => f.payload && f.payload.command_id === 'cmd_own_term_1');
+  assert.equal(
+    ownFrames.filter((f) => f.type === 'COMMAND_ACK').length,
+    1,
+    'no re-claim after ownership release: terminal cache replay only',
+  );
+  assert.equal(
+    ownFrames.filter((f) => f.type === 'COMMAND_RESULT').length,
+    3,
+    'one real terminal + two cached replays (dispatch #2 and #3)',
+  );
+  assert.equal(ownFrames[ownFrames.length - 1].type, 'COMMAND_RESULT');
+});
+
+function emitter_probe_prune(emitter) {
+  // Insert fresh evidence to trigger the internal prune pass.
+  emitter.ackRejected(`probe_${Math.random()}`, { class: 'runtime', code: 'runtime_error' });
+}

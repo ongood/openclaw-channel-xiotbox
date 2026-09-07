@@ -148,18 +148,35 @@ function settleSessionArchive(conversationId, ok, error) {
     pendingSessionArchives.delete(key);
     if (entry.timer)
         clearTimeout(entry.timer);
-    entry.client.sendMessage('COMMAND_RESULT', {
+    const terminalPayload = {
         command_id: entry.cmdId,
         status: ok ? 'success' : 'failed',
         trace_id: entry.traceId,
         ...(ok ? {} : { error: error || 'session_archive_failed' }),
         result: ok ? { conversation_id: key } : {},
-    });
+    };
+    entry.client.sendMessage('COMMAND_RESULT', terminalPayload);
+    // Terminal ordering contract (XIOT-BUG-0050b R1): cache the terminal
+    // result BEFORE releasing the execution ownership, so a duplicate that
+    // arrives after release hits the cached terminal — never a re-execution
+    // window.
+    entry.cacheResult?.(entry.cmdId, 'COMMAND_RESULT', terminalPayload);
+    entry.lifecycle?.markTerminal(entry.cmdId);
     return true;
 }
 export function dispatchSessionCommand(ctx, args) {
-    const { client, lifecycle, cacheResult, log } = ctx;
+    const { client, lifecycle, cacheResult, cachedResult, log } = ctx;
     const { action, payload, incoming, cmdId, traceId } = args;
+    // Terminal replay first (XIOT-BUG-0050b R1): a duplicate of an
+    // already-completed command replays the cached terminal result — including
+    // after the ownership entry was released/pruned. Together with the
+    // ownership gate below this leaves no re-execution window: ownership only
+    // ever releases AFTER the terminal is cached.
+    const terminal = cachedResult ? cachedResult(cmdId) : null;
+    if (terminal) {
+        client.sendMessage(terminal.type, terminal.payload);
+        return;
+    }
     const rejectWith = (code, detail) => {
         const rejection = normalizeRuntimeError(code);
         if (detail && !rejection.detail) {
@@ -169,12 +186,17 @@ export function dispatchSessionCommand(ctx, args) {
         if (frame)
             cacheResult(cmdId, frame.type, frame);
     };
-    // The command passed every protocol/security gate and now enters the
-    // business entry: canonical accepted ACK followed by reliable
-    // COMMAND_DELIVERED evidence (§4.1: acked(accepted:true) → delivered).
+    // Per-command execution gate (XIOT-BUG-0050b R1): command_id is the sole
+    // idempotency key. The first call claims execution and emits the canonical
+    // accepted ACK; any duplicate (redelivery, retry, same-tick race, even with
+    // different/invalid content) replays the recorded lifecycle evidence and
+    // must not re-enter the business path or re-classify the command. Returns
+    // false when the caller must short-circuit.
     const enterBusinessEntry = () => {
-        lifecycle.ackAccepted(cmdId, traceId);
+        if (!lifecycle.ackAccepted(cmdId, traceId))
+            return false;
         lifecycle.markDelivered(cmdId);
+        return true;
     };
     if (action === 'unsupported') {
         // Profile/vocabulary mismatch (or an unregistered command word): normalized
@@ -197,7 +219,8 @@ export function dispatchSessionCommand(ctx, args) {
         return;
     }
     if (action === 'archive') {
-        enterBusinessEntry();
+        if (!enterBusinessEntry())
+            return;
         client.sendMessage('COMMAND_RESULT', {
             command_id: cmdId,
             status: 'running',
@@ -208,6 +231,8 @@ export function dispatchSessionCommand(ctx, args) {
             cmdId,
             traceId,
             client,
+            cacheResult,
+            lifecycle,
             timer: setTimeout(() => {
                 settleSessionArchive(conversationId, false, 'session_archive_ack_timeout');
             }, SESSION_ARCHIVE_ACK_TIMEOUT_MS),
@@ -235,7 +260,8 @@ export function dispatchSessionCommand(ctx, args) {
         rejectWith('session_binding_not_found');
         return;
     }
-    enterBusinessEntry();
+    if (!enterBusinessEntry())
+        return;
     setSessionModelOverride(known.sessionKey, model);
     log?.info?.(`[XiotBox] session.model.select cmd=${cmdId} conversation=${conversationId} model=${model}`);
     const successPayload = {
@@ -245,7 +271,12 @@ export function dispatchSessionCommand(ctx, args) {
         result: { model },
     };
     client.sendMessage('COMMAND_RESULT', successPayload);
+    // Terminal ordering contract (XIOT-BUG-0050b R1): the terminal result is
+    // cached first; only then is the execution ownership released, so a
+    // duplicate arriving after release replays the cached result instead of
+    // re-executing the action.
     cacheResult(cmdId, 'COMMAND_RESULT', successPayload);
+    lifecycle.markTerminal(cmdId);
 }
 // ── Runtime visibility (XIOT-BUG-0007) ──
 // The OpenClaw channel must present itself to the gateway as a first-class
@@ -1809,12 +1840,18 @@ export const xiotboxPlugin = {
                 const entry = commandCache.get(cmdId);
                 return entry ? { type: entry.type || 'COMMAND_RESULT', payload: entry.payload } : null;
             };
+            // COMMAND_RESULT terminal results. Every call site is post-claim: the
+            // terminal payload is cached BEFORE the execution ownership is released
+            // (XIOT-BUG-0050b R1) so a duplicate arriving after release replays the
+            // cached terminal — there is no re-execution window.
             const setCached = (cmdId, payload) => {
                 pruneCache();
                 commandCache.set(cmdId, { ts: Date.now(), type: 'COMMAND_RESULT', payload });
+                commandLifecycle.markTerminal(cmdId);
             };
             // Non-COMMAND_RESULT terminal frames (canonical ACK rejections,
             // XIOT-BUG-0050b) replay with their own frame type on redelivery.
+            // Rejections never held execution ownership, so no release here.
             const setCachedFrame = (cmdId, type, payload) => {
                 pruneCache();
                 commandCache.set(cmdId, { ts: Date.now(), type, payload });
@@ -1827,7 +1864,15 @@ export const xiotboxPlugin = {
                 dispatchSessionCommand({
                     client,
                     lifecycle: commandLifecycle,
-                    cacheResult: setCachedFrame,
+                    // Session-command cacheResult doubles as the terminal cache+release
+                    // path: rejections never held ownership (markTerminal is a no-op
+                    // for them), while model.select success / archive settle write the
+                    // terminal and then release ownership — in that order.
+                    cacheResult: (cmdId, type, payload) => {
+                        setCachedFrame(cmdId, type, payload);
+                        commandLifecycle.markTerminal(cmdId);
+                    },
+                    cachedResult: getCached,
                     log,
                     deviceId: finalCfg.DEVICE_ID,
                 }, args);
@@ -1932,6 +1977,16 @@ export const xiotboxPlugin = {
                         });
                         return;
                     }
+                    // Per-command execution gate (XIOT-BUG-0050b R1): a chat command
+                    // that already claimed execution (accepted/delivered, terminal
+                    // result still pending) must never re-enter the business path,
+                    // whatever the redelivered payload contains — command_id is the
+                    // sole idempotency key. Replay the recorded lifecycle evidence and
+                    // wait for the terminal result.
+                    if (commandLifecycle.isAccepted(cmdId)) {
+                        commandLifecycle.replayLifecycleEvidence(cmdId);
+                        return;
+                    }
                     // Always refresh client peer key before handling a command.
                     // This avoids encrypting reply with stale key after mobile/desktop key rotation.
                     const cachedPeerPublicKey = e2e.peerPublicKey || '';
@@ -2007,14 +2062,15 @@ export const xiotboxPlugin = {
                         rejectCommand(e2e.peerTrustError || 'e2e_peer_missing');
                         return;
                     }
-                    // All protocol/security gates passed (XIOT-BUG-0050b): canonical
-                    // accept then reliable delivery evidence at the business entry
-                    // (PLAN-0008 §4.1: acked(accepted:true) → delivered). The durable
-                    // message.user projection below carries the same command_id with
-                    // event id `${cmdId}:message:user` (buildChatUserMessageEventId) —
-                    // the §4.6 receive unit the Gateway pairs atomically. Idempotent:
-                    // markDelivered is a no-op on replay.
-                    commandLifecycle.ackAccepted(cmdId, traceId);
+                    // Claim execution immediately before business entry — the last
+                    // gate before any side effect (XIOT-BUG-0050b R1). First caller
+                    // wins; a same-tick duplicate that lost the early gate replays the
+                    // recorded evidence inside ackAccepted and short-circuits here,
+                    // never re-entering the business path. The ownership stays active
+                    // until the terminal result is cached (setCached → markTerminal).
+                    if (!commandLifecycle.ackAccepted(cmdId, traceId)) {
+                        return;
+                    }
                     commandLifecycle.markDelivered(cmdId);
                     const buildEncryptedResult = (replyText, seq, sessionUsage, streamMeta) => {
                         const e2eMulti = {};
