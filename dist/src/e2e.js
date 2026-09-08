@@ -589,14 +589,11 @@ export class OpenClawE2E {
             Authorization: `Bearer ${this.cfg.DEVICE_TOKEN}`,
             'X-Device-Id': this.cfg.DEVICE_ID,
         };
-        const payload = {};
-        if (this.pubRaw) {
-            payload.pubkey = b64e(this.pubRaw);
-            payload.key_id = this.keyId || computeKeyId(this.pubRaw);
-            payload.algo = E2E_KEY_ALG;
-            payload.enc_v = this.encV || E2E_VERSION;
-            payload.fingerprint = computeFingerprint(this.pubRaw);
-        }
+        // Register the same signed E2E identity claim used by HELLO. The Lite
+        // peer-key endpoint is the authoritative persistence seam consumed by
+        // MCP/client senders; registering only X25519 here leaves the peer
+        // identity empty and causes strict senders to fail closed.
+        const payload = this.helloPayload() || {};
         let result;
         try {
             result = await postJsonRpc(url, payload, headers);
