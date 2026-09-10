@@ -2,7 +2,7 @@
   "id": "xiotbox",
   "name": "XiotBox OpenClaw Channel",
   "description": "XiotBox channel plugin for OpenClaw with remote chat delivery, optional device-control tools, and bridge-mode support.",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "docsPath": "README.md",
   "contracts": {
     "tools": [
