@@ -66,6 +66,7 @@ function makeClientIdentity(deviceId, clientPubB64, clientKeyId) {
   );
   const sig = crypto.sign(null, sigPayload, privateKey);
   return {
+    privateKey,
     pubDerB64,
     fingerprint,
     sigB64: sig.toString('base64'),
@@ -213,16 +214,64 @@ test('helloPayload signs the peer key with the device ed25519 identity', () => {
 
 // ── trust pinning ──
 
-function commandPeerPayload(deviceId, clientPub, clientKeyId, identity) {
+function commandPeerPayload(deviceId, clientPub, clientKeyId, identity, commandId) {
+  const resolvedCommandId = commandId || 'cmd-proof';
+  const canonicalAad = Buffer.from(
+    `oc|v=2|dir=c2p|device=${deviceId}|thread=main|cmd=${resolvedCommandId}|type=text/markdown|seq=0`,
+    'utf-8',
+  );
+  const receiver = x25519Keypair();
+  const envelope = buildEnvelope(
+    Buffer.from('proof-only'),
+    receiver.pub,
+    computeKeyId(receiver.pub),
+    canonicalAad,
+    'session-proof',
+    2,
+  );
+  const envelopeCanonical = [
+    envelope.magic ?? '',
+    envelope.version ?? '',
+    envelope.alg ?? '',
+    envelope.key_id ?? '',
+    envelope.nonce_b64 ?? '',
+    envelope.ek_b64 ?? '',
+    envelope.ct_b64 ?? '',
+    envelope.aad_b64 ?? '',
+    envelope.session_id ?? '',
+    envelope.enc_version ?? '',
+  ];
+  const envelopeSha256 = crypto
+    .createHash('sha256')
+    .update(JSON.stringify(envelopeCanonical))
+    .digest('hex');
+  const commandSigTs = String(Date.now());
+  const commandSigNonce = crypto.randomBytes(16).toString('hex');
+  const commandSigPayload = Buffer.from(
+    `occmd|v=1|device=${deviceId}|peer_pub=${clientPub.toString('base64')}|peer_key_id=${clientKeyId}|cmd=${resolvedCommandId}|aad_b64=${canonicalAad.toString('base64')}|envelope_sha256=${envelopeSha256}|ts=${commandSigTs}|nonce=${commandSigNonce}`,
+    'utf-8',
+  );
+  const commandSig = crypto.sign(null, commandSigPayload, identity.privateKey);
   return {
-    client_public_key: clientPub.toString('base64'),
-    client_key_id: clientKeyId,
-    client_identity_public_key: identity.pubDerB64,
-    client_identity_fingerprint: identity.fingerprint,
-    client_identity_sig: identity.sigB64,
-    client_identity_sig_alg: 'ed25519',
-    client_identity_sig_ts: identity.sigTs,
-    client_identity_sig_nonce: identity.sigNonce,
+    payload: {
+      client_public_key: clientPub.toString('base64'),
+      client_key_id: clientKeyId,
+      client_identity_public_key: identity.pubDerB64,
+      client_identity_fingerprint: identity.fingerprint,
+      client_identity_sig: identity.sigB64,
+      client_identity_sig_alg: 'ed25519',
+      client_identity_sig_ts: identity.sigTs,
+      client_identity_sig_nonce: identity.sigNonce,
+      client_command_identity_sig: commandSig.toString('base64'),
+      client_command_identity_sig_alg: 'ed25519',
+      client_command_identity_sig_ts: commandSigTs,
+      client_command_identity_sig_nonce: commandSigNonce,
+    },
+    command: {
+      commandId: resolvedCommandId,
+      canonicalAad,
+      envelope,
+    },
   };
 }
 
@@ -243,9 +292,8 @@ test('trust pinning enrolls the first client identity and rejects a changed one'
   );
 
   // First resolution: no pins exist yet, so the identity is enrolled.
-  const first = e2e.resolveCommandPeerFromPayload(
-    commandPeerPayload('dev-trust-1', firstX.pub, firstKeyId, firstIdentity),
-  );
+  const firstCommand = commandPeerPayload('dev-trust-1', firstX.pub, firstKeyId, firstIdentity, 'cmd-first');
+  const first = e2e.resolveCommandPeerFromPayload(firstCommand.payload, firstCommand.command);
   assert.ok(first, 'first identity is pinned');
   assert.equal(first.publicKey, firstX.pub.toString('base64'));
   assert.equal(e2e.peerTrustError, '');
@@ -258,9 +306,8 @@ test('trust pinning enrolls the first client identity and rejects a changed one'
     secondX.pub.toString('base64'),
     secondKeyId,
   );
-  const second = e2e.resolveCommandPeerFromPayload(
-    commandPeerPayload('dev-trust-1', secondX.pub, secondKeyId, secondIdentity),
-  );
+  const secondCommand = commandPeerPayload('dev-trust-1', secondX.pub, secondKeyId, secondIdentity, 'cmd-second');
+  const second = e2e.resolveCommandPeerFromPayload(secondCommand.payload, secondCommand.command);
   assert.equal(second, null);
   assert.equal(e2e.peerTrustError, 'client_identity_changed');
 });
@@ -280,12 +327,11 @@ test('trust pinning rejects an identity whose fingerprint does not match its key
     clientX.pub.toString('base64'),
     clientKeyId,
   );
-  const payload = commandPeerPayload('dev-trust-2', clientX.pub, clientKeyId, identity);
-  // Corrupt the claimed fingerprint while keeping a valid signature over the
-  // (now inconsistent) key/fingerprint pair.
-  payload.client_identity_fingerprint = '0'.repeat(64);
+  const command = commandPeerPayload('dev-trust-2', clientX.pub, clientKeyId, identity, 'cmd-fingerprint');
+  // Corrupt the claimed fingerprint while keeping a valid command proof.
+  command.payload.client_identity_fingerprint = '0'.repeat(64);
 
-  assert.equal(e2e.resolveCommandPeerFromPayload(payload), null);
+  assert.equal(e2e.resolveCommandPeerFromPayload(command.payload, command.command), null);
   // XIOT-BUG-0050b (PLAN-0008 §4.5): the identity material parses, but the
   // authenticity/trust check failed — a runtime-local policy rejection.
   assert.equal(e2e.peerTrustError, 'signature_invalid');
@@ -306,11 +352,8 @@ test('trust pinning re-enrolls an additional identity when enrollment is allowed
     firstX.pub.toString('base64'),
     firstKeyId,
   );
-  assert.ok(
-    e2e.resolveCommandPeerFromPayload(
-      commandPeerPayload('dev-trust-3', firstX.pub, firstKeyId, firstIdentity),
-    ),
-  );
+  const firstCommand = commandPeerPayload('dev-trust-3', firstX.pub, firstKeyId, firstIdentity, 'cmd-enroll-first');
+  assert.ok(e2e.resolveCommandPeerFromPayload(firstCommand.payload, firstCommand.command));
 
   const secondX = x25519Keypair();
   const secondKeyId = computeKeyId(secondX.pub);
@@ -319,9 +362,8 @@ test('trust pinning re-enrolls an additional identity when enrollment is allowed
     secondX.pub.toString('base64'),
     secondKeyId,
   );
-  const second = e2e.resolveCommandPeerFromPayload(
-    commandPeerPayload('dev-trust-3', secondX.pub, secondKeyId, secondIdentity),
-  );
+  const secondCommand = commandPeerPayload('dev-trust-3', secondX.pub, secondKeyId, secondIdentity, 'cmd-enroll-second');
+  const second = e2e.resolveCommandPeerFromPayload(secondCommand.payload, secondCommand.command);
   assert.ok(second, 'additional identity is enrolled when allowed');
   assert.equal(e2e.peerTrustError, '');
 });
