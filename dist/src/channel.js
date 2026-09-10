@@ -2037,6 +2037,15 @@ export const xiotboxPlugin = {
                         log,
                     });
                     const contextEpoch = conversationBinding?.contextEpoch ?? contextEpochResolution.epoch;
+                    const commandAad = e2e.buildAad({
+                        direction: 'c2p',
+                        device_id: finalCfg.DEVICE_ID,
+                        thread_id: threadId,
+                        command_id: cmdId,
+                        content_type: contentType,
+                        chunk_seq: 0,
+                        enc_v: Number(env?.enc_version ?? e2e.encV),
+                    });
                     let text = '';
                     try {
                         text = e2e.decryptText(env, {
@@ -2046,7 +2055,7 @@ export const xiotboxPlugin = {
                             command_id: cmdId,
                             content_type: contentType,
                             chunk_seq: 0,
-                            enc_v: e2e.encV,
+                            enc_v: Number(env?.enc_version ?? e2e.encV),
                         });
                     }
                     catch (_err) {
@@ -2055,7 +2064,11 @@ export const xiotboxPlugin = {
                         rejectCommand('e2e_decrypt_failed');
                         return;
                     }
-                    const replyPeers = e2e.collectReplyPeers(incoming);
+                    const replyPeers = e2e.collectReplyPeers(incoming, {
+                        commandId: cmdId,
+                        canonicalAad: commandAad,
+                        envelope: env,
+                    });
                     if (!replyPeers.length) {
                         // Structurally valid material that fails verification / trust
                         // pinning / authorization normalizes to class=policy (§4.5 row 3).

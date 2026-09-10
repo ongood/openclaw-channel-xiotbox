@@ -241,6 +241,35 @@ function buildIdentitySigPayload(meta) {
     ];
     return Buffer.from(`ocid|${parts.join('|')}`, 'utf-8');
 }
+function envelopeDigest(envelope) {
+    const canonical = [
+        envelope?.magic ?? '',
+        envelope?.version ?? '',
+        envelope?.alg ?? '',
+        envelope?.key_id ?? '',
+        envelope?.nonce_b64 ?? '',
+        envelope?.ek_b64 ?? '',
+        envelope?.ct_b64 ?? '',
+        envelope?.aad_b64 ?? '',
+        envelope?.session_id ?? '',
+        envelope?.enc_version ?? '',
+    ];
+    return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+function buildCommandIdentitySigPayload(meta) {
+    const parts = [
+        'v=1',
+        `device=${meta.device_id || ''}`,
+        `peer_pub=${meta.peer_pub || ''}`,
+        `peer_key_id=${meta.peer_key_id || ''}`,
+        `cmd=${meta.command_id || ''}`,
+        `aad_b64=${b64e(meta.canonical_aad)}`,
+        `envelope_sha256=${envelopeDigest(meta.envelope)}`,
+        `ts=${meta.sig_ts || ''}`,
+        `nonce=${meta.sig_nonce || ''}`,
+    ];
+    return Buffer.from(`occmd|${parts.join('|')}`, 'utf-8');
+}
 function resolveTrustPath(cfg, deviceId) {
     if (cfg?.TRUST_PATH)
         return cfg.TRUST_PATH;
@@ -287,22 +316,34 @@ function extractClientIdentity(result) {
         sigNonce: String(result?.client_identity_sig_nonce || result?.identity_sig_nonce || ''),
     };
 }
-function verifyAndPinClientIdentity(cfg, deviceId, result, log) {
+function verifyAndPinClientIdentity(cfg, deviceId, result, log, command) {
     const clientPub = String(result?.client_public_key || '');
     const clientKeyId = String(result?.client_key_id || '');
     if (!clientPub)
         return { ok: false, fp: '', err: 'e2e_peer_missing' };
     const identity = extractClientIdentity(result);
-    if (!identity.pubDerB64 || !identity.sigB64)
+    const sigB64 = command
+        ? String(result?.client_command_identity_sig || result?.command_identity_sig || '')
+        : identity.sigB64;
+    const sigAlg = command
+        ? String(result?.client_command_identity_sig_alg || result?.command_identity_sig_alg || 'ed25519')
+        : identity.sigAlg;
+    const sigTs = command
+        ? String(result?.client_command_identity_sig_ts || result?.command_identity_sig_ts || '')
+        : identity.sigTs;
+    const sigNonce = command
+        ? String(result?.client_command_identity_sig_nonce || result?.command_identity_sig_nonce || '')
+        : identity.sigNonce;
+    if (!identity.pubDerB64 || !sigB64)
         return { ok: false, fp: '', err: 'client_identity_missing' };
-    const alg = String(identity.sigAlg || 'ed25519').toLowerCase().trim();
+    const alg = String(sigAlg || 'ed25519').toLowerCase().trim();
     if (alg && alg !== 'ed25519')
         return { ok: false, fp: '', err: 'client_identity_unsupported_alg' };
     let pubDer;
     let sig;
     try {
         pubDer = b64d(identity.pubDerB64);
-        sig = b64d(identity.sigB64);
+        sig = b64d(sigB64);
     }
     catch (_err) {
         return { ok: false, fp: '', err: 'client_identity_invalid' };
@@ -316,13 +357,24 @@ function verifyAndPinClientIdentity(cfg, deviceId, result, log) {
         // runtime-local security policy rejection (XIOT-BUG-0050b, §4.5 row 3).
         return { ok: false, fp, err: 'signature_invalid' };
     }
-    const sigPayload = buildIdentitySigPayload({
-        device_id: deviceId,
-        peer_pub: clientPub,
-        peer_key_id: clientKeyId,
-        sig_ts: identity.sigTs,
-        sig_nonce: identity.sigNonce,
-    });
+    const sigPayload = command
+        ? buildCommandIdentitySigPayload({
+            device_id: deviceId,
+            peer_pub: clientPub,
+            peer_key_id: clientKeyId,
+            command_id: command.commandId,
+            canonical_aad: command.canonicalAad,
+            envelope: command.envelope,
+            sig_ts: sigTs,
+            sig_nonce: sigNonce,
+        })
+        : buildIdentitySigPayload({
+            device_id: deviceId,
+            peer_pub: clientPub,
+            peer_key_id: clientKeyId,
+            sig_ts: sigTs,
+            sig_nonce: sigNonce,
+        });
     try {
         const pubKey = crypto.createPublicKey({ key: pubDer, format: 'der', type: 'spki' });
         const ok = crypto.verify(null, sigPayload, pubKey, sig);
@@ -687,7 +739,7 @@ export class OpenClawE2E {
             throw new Error('missing_peer_key');
         return raw;
     }
-    resolveCommandPeerFromPayload(payload) {
+    resolveCommandPeerFromPayload(payload, command) {
         this.peerTrustError = '';
         if (!payload || typeof payload !== 'object') {
             this.peerTrustError = 'e2e_peer_missing';
@@ -713,7 +765,11 @@ export class OpenClawE2E {
             client_identity_sig_alg: payload?.client_identity_sig_alg || payload?.identity_sig_alg || '',
             client_identity_sig_ts: payload?.client_identity_sig_ts || payload?.identity_sig_ts || '',
             client_identity_sig_nonce: payload?.client_identity_sig_nonce || payload?.identity_sig_nonce || '',
-        }, this.log);
+            client_command_identity_sig: payload?.client_command_identity_sig || payload?.command_identity_sig || '',
+            client_command_identity_sig_alg: payload?.client_command_identity_sig_alg || payload?.command_identity_sig_alg || '',
+            client_command_identity_sig_ts: payload?.client_command_identity_sig_ts || payload?.command_identity_sig_ts || '',
+            client_command_identity_sig_nonce: payload?.client_command_identity_sig_nonce || payload?.command_identity_sig_nonce || '',
+        }, this.log, command);
         if (!verified.ok) {
             this.peerTrustError = verified.err || 'client_identity_invalid';
             this.log?.warn?.(`[XiotBox] Command peer identity rejected err=${verified.err || 'client_identity_invalid'} key=${clientKeyId.slice(0, 8)}...`);
@@ -722,8 +778,8 @@ export class OpenClawE2E {
         this.peerTrustError = '';
         return { publicKey: b64e(clientRaw), keyId: clientKeyId };
     }
-    collectReplyPeers(payload) {
-        const primary = this.resolveCommandPeerFromPayload(payload);
+    collectReplyPeers(payload, command) {
+        const primary = this.resolveCommandPeerFromPayload(payload, command);
         if (!primary) {
             if (!this.peerTrustError) {
                 this.peerTrustError = 'e2e_peer_missing';
