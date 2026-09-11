@@ -2404,6 +2404,15 @@ export const xiotboxPlugin = {
           const sessionCommandType = normalizeStringValue(payload?.command_type)
             ?? normalizeStringValue(incoming?.command_type)
             ?? '';
+          if (sessionCommandType.startsWith('workspace.')) {
+            await handleWorkspaceCommand({
+              commandType: sessionCommandType,
+              incoming,
+              cmdId,
+              traceId,
+            });
+            return;
+          }
           const sessionAction = resolveSessionCommandAction(sessionCommandType);
           if (sessionAction !== 'chat') {
             handleSessionCommand({

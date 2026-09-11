@@ -466,11 +466,19 @@ test('conversation word list declares the real support matrix', () => {
   assert.equal(declaration.conversation_fork, false);
 });
 
-test('workspace_context is false and never derived from the empty list', () => {
+test('workspace_context is true and persistent workspace execution facts are explicit', () => {
   const declaration = buildOpenclawCapabilityDeclaration();
-  assert.equal(declaration.workspace_context, false);
+  assert.equal(declaration.workspace_context, true);
   assert.equal(declaration.workspace_create, false);
-  assert.deepEqual(buildOpenclawResourceFacts().workspaces, []);
+  assert.deepEqual(buildOpenclawResourceFacts(true).workspaces, [{
+    workspace_id: 'workspace',
+    name: 'OpenClaw Workspace',
+    readable: true,
+    writable: true,
+    executable: true,
+    execution_profiles: ['safe', 'full.workspace'],
+  }]);
+  assert.deepEqual(buildOpenclawResourceFacts(false).workspaces, []);
 });
 
 test('e2e policy requires OGE2E1 for chat commands', () => {
@@ -530,7 +538,7 @@ test('gateway profile keeps the declared tri-states verbatim', () => {
   assert.equal(outcome.profile.core.capability_advertisement, true);
   assert.equal(outcome.profile.core.e2e_policy_declaration, true);
   assert.equal(outcome.profile.optional.conversation_create, true);
-  assert.equal(outcome.profile.optional.workspace_context, false);
+  assert.equal(outcome.profile.optional.workspace_context, true);
   assert.equal(outcome.profile.optional.model_selection, true);
   assert.equal(outcome.profile.optional.model_catalog, false);
   assert.equal(outcome.profile.optional.interrupt, false);
