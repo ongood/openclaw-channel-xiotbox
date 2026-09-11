@@ -115,7 +115,9 @@ function validateArgv(value: unknown, profile: ExecutionProfile): string[] {
   }
   if (profile === "full.workspace") return argv;
 
-  const normalizedProgram = argv[0].replaceAll("\\", "/");
+  const firstProgram = argv[0];
+  if (firstProgram === undefined) throw new Error("workspace_exec_argv_invalid");
+  const normalizedProgram = firstProgram.replaceAll("\\", "/");
   argv[0] = normalizedProgram;
   const projectPython = PROJECT_VENV_PYTHON.test(normalizedProgram);
   const executable = basename(normalizedProgram).toLowerCase().replace(/\.exe$/i, "");
