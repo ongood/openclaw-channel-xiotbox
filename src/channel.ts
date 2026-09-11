@@ -41,6 +41,11 @@ import {
   buildOpenclawCapabilityDeclaration,
   buildOpenclawResourceFacts,
 } from './runtime-profile.js';
+import { executeWorkspaceControl } from './workspace-control.js';
+import {
+  buildOpenclawWorkspaceRegistry,
+  openclawWorkspaceAvailable,
+} from './runtime-workspace.js';
 import { getDirectSender, registerDirectSender } from './direct-send.js';
 import {
   clearConnectedAt,
@@ -520,7 +525,7 @@ export function buildOpenclawRuntimeId(deviceId: string): string {
   return normalized ? `openclaw-${normalized}` : '';
 }
 
-export function buildOpenclawRuntimeListPayload(deviceId: string): {
+export function buildOpenclawRuntimeListPayload(deviceId: string, cfg?: any): {
   device_id: string;
   runtimes: Array<Record<string, unknown>>;
 } {
@@ -537,7 +542,7 @@ export function buildOpenclawRuntimeListPayload(deviceId: string): {
             status: 'online',
             // Resource facts only (XIOT-PLAN-0008 §3.2 rule 4): empty lists
             // mean "nothing published", never a capability tri-state.
-            ...buildOpenclawResourceFacts(),
+            ...buildOpenclawResourceFacts(openclawWorkspaceAvailable(cfg)),
             // Explicit device capability declaration (XIOT-BUG-0050a),
             // published under the exact `capabilities` key the Gateway 0048a
             // contract reads (bot_ws._handle_runtimes_list →
@@ -1982,6 +1987,8 @@ export const xiotboxPlugin = {
       const accountId = normalizeAccountId(ctx?.accountId);
       const instanceId = nextGatewayInstanceId();
       const finalCfg = buildConfig(getChannelConfig(cfg));
+      const openclawRuntimeId = buildOpenclawRuntimeId(finalCfg.DEVICE_ID);
+      const workspaceRegistry = buildOpenclawWorkspaceRegistry(openclawRuntimeId, cfg);
       updateGatewayStatus(ctx, accountId, {
         running: true,
         connected: false,
@@ -2245,6 +2252,49 @@ export const xiotboxPlugin = {
         );
       };
 
+      const handleWorkspaceCommand = async (args: {
+        commandType: string;
+        incoming: Record<string, unknown>;
+        cmdId: string;
+        traceId: string | null;
+      }): Promise<void> => {
+        const cached = getCached(args.cmdId);
+        if (cached) {
+          client.sendMessage(cached.type, cached.payload);
+          return;
+        }
+        if (!commandLifecycle.ackAccepted(args.cmdId, args.traceId)) {
+          commandLifecycle.replayLifecycleEvidence(args.cmdId);
+          return;
+        }
+        commandLifecycle.markDelivered(args.cmdId);
+        try {
+          const result = await executeWorkspaceControl(
+            workspaceRegistry,
+            args.commandType,
+            args.incoming,
+          );
+          const terminalPayload = {
+            command_id: args.cmdId,
+            status: 'success',
+            trace_id: args.traceId,
+            result,
+          };
+          client.sendMessage('COMMAND_RESULT', terminalPayload);
+          setCached(args.cmdId, terminalPayload);
+        } catch (err: any) {
+          const terminalPayload = {
+            command_id: args.cmdId,
+            status: 'failed',
+            trace_id: args.traceId,
+            error: err instanceof Error ? err.message : String(err),
+            result: err?.details && typeof err.details === 'object' ? { details: err.details } : {},
+          };
+          client.sendMessage('COMMAND_RESULT', terminalPayload);
+          setCached(args.cmdId, terminalPayload);
+        }
+      };
+
       client.on('SESSION.ARCHIVE_ACK', (ackPayload: any) => {
         settleSessionArchiveAck(ackPayload);
       });
@@ -2354,6 +2404,15 @@ export const xiotboxPlugin = {
           const sessionCommandType = normalizeStringValue(payload?.command_type)
             ?? normalizeStringValue(incoming?.command_type)
             ?? '';
+          if (sessionCommandType.startsWith('workspace.')) {
+            await handleWorkspaceCommand({
+              commandType: sessionCommandType,
+              incoming,
+              cmdId,
+              traceId,
+            });
+            return;
+          }
           const sessionAction = resolveSessionCommandAction(sessionCommandType);
           if (sessionAction !== 'chat') {
             handleSessionCommand({
@@ -3434,7 +3493,7 @@ export const xiotboxPlugin = {
         });
         // Runtime visibility (XIOT-BUG-0007): publish the openclaw runtime so
         // /v2/runtimes and orchestrator dispatch see this device as openclaw.
-        client.sendMessage('RUNTIMES.LIST', buildOpenclawRuntimeListPayload(finalCfg.DEVICE_ID));
+        client.sendMessage('RUNTIMES.LIST', buildOpenclawRuntimeListPayload(finalCfg.DEVICE_ID, cfg));
         // Re-register known conversation bindings after a reconnect; the
         // gateway upsert is idempotent and never clobbers client bindings.
         for (const [conversationId, known] of conversationBindingRegistry.entries()) {
