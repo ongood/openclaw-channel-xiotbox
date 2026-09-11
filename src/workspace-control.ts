@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 
 export const WORKSPACE_EXEC_MAX_TIMEOUT_MS = 3_600_000;
 export const WORKSPACE_EXEC_MAX_ARGS = 256;
@@ -13,6 +13,8 @@ const SAFE_EXECUTABLES = new Set([
   "bun", "cargo", "dart", "deno", "flutter", "git", "go", "node", "npm", "npx", "pnpm",
   "poetry", "py.test", "pytest", "python", "python3", "tsc", "yarn",
 ]);
+const SAFE_GIT_SUBCOMMANDS = new Set(["diff", "log", "rev-parse", "show", "status"]);
+const PROJECT_VENV_PYTHON = /^(?:\.venv|venv)\/(?:bin\/(?:python|python3)|Scripts\/python(?:\.exe)?)$/i;
 
 export interface WorkspaceControlRegistry {
   resolve(runtimeId: string, workspaceId: string): Promise<{
@@ -111,15 +113,38 @@ function validateArgv(value: unknown, profile: ExecutionProfile): string[] {
   if (argv.some((item) => !item || item.length > 8192 || item.includes("\0"))) {
     throw new Error("workspace_exec_argv_invalid");
   }
-  if (profile === "safe") {
-    const executable = argv[0];
-    if (executable === undefined || executable.includes("/") || executable.includes("\\") || !SAFE_EXECUTABLES.has(executable.replace(/\.exe$/i, "").toLowerCase())) {
-      throw new Error("workspace_exec_not_allowed");
+  if (profile === "full.workspace") return argv;
+
+  const normalizedProgram = argv[0].replaceAll("\\", "/");
+  argv[0] = normalizedProgram;
+  const projectPython = PROJECT_VENV_PYTHON.test(normalizedProgram);
+  const executable = basename(normalizedProgram).toLowerCase().replace(/\.exe$/i, "");
+  if ((!projectPython && (normalizedProgram.includes("/") || !SAFE_EXECUTABLES.has(executable)))
+      || /(^|\/)\.\.(\/|$)/.test(normalizedProgram)) {
+    throw new Error("workspace_exec_not_allowed");
+  }
+  if (executable === "git") {
+    const subcommand = String(argv[1] ?? "").toLowerCase();
+    if (subcommand !== "--version" && !SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
+      throw new Error("workspace_git_command_not_allowed");
+    }
+  }
+  if (["bun", "deno", "node", "python", "python3"].includes(executable)) {
+    const forbidden = new Set(["-c", "-e", "--eval", "-p", "--print"]);
+    if (argv.slice(1).some((argument) => forbidden.has(argument) || argument.startsWith("--inspect"))) {
+      throw new Error("workspace_exec_inline_code_not_allowed");
+    }
+  }
+  for (const argument of argv.slice(1)) {
+    if (isAbsolute(argument) || win32.isAbsolute(argument) || /(^|[\\/])\.\.([\\/]|$)/.test(argument)) {
+      throw new Error("workspace_exec_argument_path_rejected");
+    }
+    if (/=[A-Za-z]:[\\/]/.test(argument) || argument.includes("=/")) {
+      throw new Error("workspace_exec_argument_path_rejected");
     }
   }
   return argv;
 }
-
 function executionArgv(payload: Record<string, unknown>): { profile: ExecutionProfile; argv: string[] } {
   const profile = executionProfile(payload.execution_profile);
   const command = typeof payload.command === "string" ? payload.command : "";
