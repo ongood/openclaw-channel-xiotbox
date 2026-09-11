@@ -101,7 +101,7 @@ async function resolveCwd(
     workspaceId,
     root,
     cwd,
-    cwdDisplay: relative(root, cwd).replaceAll("\\", "/") || ".",
+    cwdDisplay: relative(root, cwd).split("\\").join("/") || ".",
   };
 }
 
@@ -117,7 +117,7 @@ function validateArgv(value: unknown, profile: ExecutionProfile): string[] {
 
   const firstProgram = argv[0];
   if (firstProgram === undefined) throw new Error("workspace_exec_argv_invalid");
-  const normalizedProgram = firstProgram.replaceAll("\\", "/");
+  const normalizedProgram = firstProgram.split("\\").join("/");
   argv[0] = normalizedProgram;
   const projectPython = PROJECT_VENV_PYTHON.test(normalizedProgram);
   const executable = basename(normalizedProgram).toLowerCase().replace(/\.exe$/i, "");
